@@ -4,145 +4,172 @@ import plotly.express as px
 import plotly.figure_factory as ff
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, recall_score
 
 st.set_page_config(page_title="IBM HR 離職預測黑客松", layout="wide")
 
-st.title("📊 IBM HR Analytics：離職數據黑客松")
+# ==========================================
+# 0. 定義自動翻譯函式 (Translation Logic)
+# ==========================================
+@st.cache_data
+def load_and_translate_data(file):
+    df = pd.read_csv(file)
+    
+    # 1. 欄位名稱翻譯對照表
+    columns_translation = {
+        'Age': '年齡', 'Attrition': '離職', 'BusinessTravel': '商務差旅', 'DailyRate': '日薪',
+        'Department': '部門', 'DistanceFromHome': '通勤距離', 'Education': '教育程度',
+        'EducationField': '教育領域', 'EmployeeCount': '員工數量', 'EmployeeNumber': '員工編號',
+        'EnvironmentSatisfaction': '環境滿意度', 'Gender': '性別', 'HourlyRate': '時薪',
+        'JobInvolvement': '工作投入度', 'JobLevel': '職級', 'JobRole': '職位角色',
+        'JobSatisfaction': '工作滿意度', 'MaritalStatus': '婚姻狀況', 'MonthlyIncome': '月收入',
+        'MonthlyRate': '月費率', 'NumCompaniesWorked': '曾工作公司數量', 'Over18': '年滿18歲',
+        'OverTime': '加班', 'PercentSalaryHike': '加薪百分比', 'PerformanceRating': '績效評級',
+        'RelationshipSatisfaction': '人際關係滿意度', 'StandardHours': '標準工時',
+        'StockOptionLevel': '股票期權級別', 'TotalWorkingYears': '總工作年資',
+        'TrainingTimesLastYear': '去年培訓次數', 'WorkLifeBalance': '工作生活平衡',
+        'YearsAtCompany': '在職年資', 'YearsInCurrentRole': '目前職位年資',
+        'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
+    }
+
+    # 2. 內容值翻譯對照表
+    values_translation = {
+        'Attrition': {'Yes': '是', 'No': '否'},
+        'BusinessTravel': {'Travel_Rarely': '很少出差', 'Travel_Frequently': '經常出差', 'Non-Travel': '不出差'},
+        'Department': {'Sales': '銷售部', 'Research & Development': '研發部', 'Human Resources': '人力資源部'},
+        'EducationField': {'Life Sciences': '生命科學', 'Other': '其他', 'Medical': '醫療', 'Marketing': '市場行銷', 'Technical Degree': '技術學位', 'Human Resources': '人力資源'},
+        'Gender': {'Female': '女性', 'Male': '男性'},
+        'JobRole': {'Sales Executive': '銷售主管', 'Research Scientist': '研究科學家', 'Laboratory Technician': '實驗室技術員', 'Manufacturing Director': '製造總監', 'Healthcare Representative': '醫療代表', 'Manager': '經理', 'Sales Representative': '銷售代表', 'Research Director': '研究總監', 'Human Resources': '人力資源專員'},
+        'MaritalStatus': {'Single': '單身', 'Married': '已婚', 'Divorced': '離婚'},
+        'Over18': {'Y': '是'},
+        'OverTime': {'Yes': '是', 'No': '否'}
+    }
+
+    # 執行翻譯
+    for col, trans_dict in values_translation.items():
+        if col in df.columns:
+            df[col] = df[col].replace(trans_dict)
+
+    df.rename(columns=columns_translation, inplace=True)
+    return df
+
+# ==========================================
+# 1. 介面開始
+# ==========================================
+st.title("📊 IBM HR Analytics：離職數據黑客松 (全中文版)")
 st.markdown("""
 ### 競賽任務：
-我們使用了 **IBM 真實員工數據集**。請各組利用此分析工具，找出 **「導致員工離職的 3 大關鍵元兇」**，並據此提出改善策略。
-
-**評分標準：**
-1.  **數據洞察 (40%)**：是否正確解讀數據？(例如：發現加班對離職的影響)
-2.  **商業策略 (40%)**：提出的解決方案是否可行？(例如：針對加班者提供補休或加班費調整)
-3.  **預測準度 (20%)**：利用 AI 模型預測誰會離職的準確率。
+請上傳 IBM 原始英文資料集，系統將自動翻譯並進行分析。
+找出 **「導致員工離職的 3 大關鍵元兇」**，並據此提出改善策略。
 """)
 
-# ==========================================
-# 1. 資料上傳區
-# ==========================================
+# 資料上傳區
 st.sidebar.header("📂 步驟 1：上傳資料集")
-uploaded_file = st.sidebar.file_uploader("請上傳 IBM-HR-Employee-Attrition.csv", type=["csv"])
-
-# 預設載入範例資料 (如果老師還沒下載，先產生假資料以免報錯)
-@st.cache_data
-def load_sample_data():
-    # 這裡只是為了演示，實際上請學生上傳 Kaggle 下載的 csv
-    return pd.DataFrame() 
+uploaded_file = st.sidebar.file_uploader("請上傳英文版 csv 檔 (WA_Fn-UseC_-HR-Employee-Attrition.csv)", type=["csv"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    st.success("資料載入成功！")
+    # 呼叫翻譯函式
+    df = load_and_translate_data(uploaded_file)
+    st.success("✅ 資料載入並翻譯成功！")
 else:
-    st.info("👆 請從側邊欄上傳 Kaggle 的 IBM HR csv 檔案。")
+    st.info("👆 請從側邊欄上傳 CSV 檔案。")
     st.stop()
 
 # ==========================================
-# 2. 數據概覽 (Data Overview)
+# 2. 數據概覽
 # ==========================================
-with st.expander("🔍 點擊檢視原始資料 (Raw Data)", expanded=False):
-    st.dataframe(df.head(10))
+with st.expander("🔍 點擊檢視完整資料 (已中文化)", expanded=False):
+    st.dataframe(df)
     st.write(f"總筆數：{df.shape[0]} 位員工 | 欄位數：{df.shape[1]}")
 
 # ==========================================
-# 3. 自動化關聯分析 (Correlation Analysis)
+# 3. 自動化關聯分析
 # ==========================================
-st.header("1. 離職原因探索 (Exploratory Data Analysis)")
-st.write("系統自動分析各變數與 **Attrition (離職)** 的關係。")
+st.header("1. 離職原因探索 (EDA)")
+st.write("系統自動分析各變數與 **離職** 的關係。")
 
-# 將 Attrition 轉換為數字 (Yes=1, No=0) 以便計算
-if 'Attrition' in df.columns:
-    df['Attrition_Num'] = df['Attrition'].apply(lambda x: 1 if x == 'Yes' else 0)
+# 將離職轉回數字以便計算 (是=1, 否=0)
+if '離職' in df.columns:
+    df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '是' else 0)
     
-    # 選擇要分析的因子
+    # 排除非數值欄位，只留下適合分析的
+    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+    # 加上一些重要的類別欄位
+    categorical_cols = ['加班', '商務差旅', '部門', '性別', '婚姻狀況']
+    
+    all_factors = numeric_cols + categorical_cols
+    if '離職_數值' in all_factors: all_factors.remove('離職_數值')
+
     factors = st.multiselect("請選擇你們懷疑的影響因子：", 
-                             ['Age', 'DailyRate', 'DistanceFromHome', 'EnvironmentSatisfaction', 
-                              'HourlyRate', 'JobInvolvement', 'JobLevel', 'JobSatisfaction', 
-                              'MonthlyIncome', 'NumCompaniesWorked', 'OverTime', 
-                              'PercentSalaryHike', 'TotalWorkingYears', 'WorkLifeBalance', 
-                              'YearsAtCompany', 'YearsInCurrentRole', 'YearsSinceLastPromotion'],
-                             default=['MonthlyIncome', 'Age', 'DistanceFromHome', 'JobSatisfaction'])
+                             all_factors,
+                             default=['月收入', '年齡', '通勤距離', '工作滿意度', '加班'])
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # 視覺化：離職 vs 因子
         target_factor = st.selectbox("詳細觀察哪一個因子？", factors)
         
-        # 如果是數值型 (如薪水)
+        # 判斷是數值還是類別
         if df[target_factor].dtype != 'object':
-            fig = px.box(df, x="Attrition", y=target_factor, color="Attrition", 
-                         title=f"離職者與在職者的 {target_factor} 差異分析",
-                         points="all")
+            # 數值型用盒鬚圖
+            fig = px.box(df, x="離職", y=target_factor, color="離職", 
+                         title=f"離職與在職者的 {target_factor} 差異",
+                         color_discrete_map={'是':'#FF4B4B', '否':'#1F77B4'})
             st.plotly_chart(fig, use_container_width=True)
-            
-            # 統計檢定提示
-            avg_yes = df[df['Attrition']=='Yes'][target_factor].mean()
-            avg_no = df[df['Attrition']=='No'][target_factor].mean()
-            diff_pct = ((avg_yes - avg_no) / avg_no) * 100
-            
-            st.info(f"💡 數據洞察：離職者的平均 **{target_factor}** 為 {avg_yes:.1f}，比在職者 ({avg_no:.1f}) 差異約 **{diff_pct:.1f}%**。")
-            
         else:
-            # 如果是類別型 (如 OverTime)
-            fig = px.histogram(df, x=target_factor, color="Attrition", barmode="group",
-                               title=f"{target_factor} 分佈對離職的影響")
+            # 類別型用長條圖 (計算離職率)
+            # 先計算各組的離職率
+            group_data = df.groupby(target_factor)['離職_數值'].mean().reset_index()
+            group_data['離職率%'] = (group_data['離職_數值'] * 100).round(1)
+            
+            fig = px.bar(group_data, x=target_factor, y='離職率%', 
+                         title=f"不同 {target_factor} 的離職率分析",
+                         text='離職率%', color='離職率%')
             st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.subheader("🔥 相關性熱圖")
-        st.write("顏色越紅，代表與「離職」相關性越強 (正相關)；越藍代表越能「留任」 (負相關)。")
-        
-        # 計算相關係數
-        # 處理 OverTime 這種文字欄位
-        df_corr = df.copy()
-        if 'OverTime' in df_corr.columns:
-            df_corr['OverTime'] = df_corr['OverTime'].apply(lambda x: 1 if x == 'Yes' else 0)
-            
-        corr_cols = factors + ['Attrition_Num']
-        # 只取存在的欄位
-        valid_cols = [c for c in corr_cols if c in df_corr.columns]
-        
-        corr_matrix = df_corr[valid_cols].corr()[['Attrition_Num']].sort_values(by='Attrition_Num', ascending=False)
-        
-        fig_corr = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='RdBu_r', aspect="auto")
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.subheader("🔥 相關性熱圖 (數值型)")
+        # 只取數值型欄位做熱圖
+        corr_cols = [c for c in factors if c in numeric_cols] + ['離職_數值']
+        if len(corr_cols) > 1:
+            corr_matrix = df[corr_cols].corr()[['離職_數值']].sort_values(by='離職_數值', ascending=False)
+            fig_corr = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='RdBu_r', aspect="auto")
+            st.plotly_chart(fig_corr, use_container_width=True)
+        else:
+            st.write("請選擇更多數值型因子以顯示熱圖")
 
 # ==========================================
-# 4. AI 離職預測模型 (Machine Learning)
+# 4. AI 離職預測模型
 # ==========================================
 st.divider()
 st.header("2. AI 預測模型競賽")
-st.write("訓練一個機器學習模型，預測誰會離職。請調整參數以獲得最高準確率。")
-
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 col_model_1, col_model_2 = st.columns(2)
 
 with col_model_1:
     st.subheader("⚙️ 模型參數設定")
-    n_estimators = st.slider("決策樹數量 (Trees)", 10, 200, 100)
-    max_depth = st.slider("樹的深度 (Max Depth)", 1, 20, 10)
-    test_size = st.slider("測試集比例 (Test Size)", 0.1, 0.5, 0.2)
+    n_estimators = st.slider("決策樹數量", 10, 200, 100)
+    test_size = st.slider("測試集比例", 0.1, 0.5, 0.2)
     
-    # 特徵工程：將類別轉數字
-    df_ml = pd.get_dummies(df.drop(['Attrition', 'EmployeeCount', 'EmployeeNumber', 'Over18', 'StandardHours'], axis=1, errors='ignore'), drop_first=True)
+    # 資料前處理：類別轉數字 (One-Hot Encoding)
+    # 排除不必要的欄位
+    drop_cols = ['離職', '員工數量', '員工編號', '年滿18歲', '標準工時', '離職_數值']
+    df_ml = pd.get_dummies(df.drop(drop_cols, axis=1, errors='ignore'), drop_first=True)
     
-    # 執行訓練
     if st.button("🚀 訓練模型並預測"):
-        X = df_ml.drop('Attrition_Num', axis=1, errors='ignore')
-        y = df_ml['Attrition_Num']
+        X = df_ml
+        y = df['離職_數值']
         
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
         
-        model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+        model = RandomForestClassifier(n_estimators=n_estimators, random_state=42)
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         
         acc = accuracy_score(y_test, y_pred)
-        recall = recall_score(y_test, y_pred) # 抓出離職者的能力
+        recall = recall_score(y_test, y_pred)
         
         st.session_state['model_result'] = {'acc': acc, 'recall': recall, 'model': model, 'features': X.columns}
 
@@ -150,25 +177,19 @@ with col_model_2:
     if 'model_result' in st.session_state:
         res = st.session_state['model_result']
         st.subheader("🏆 模型成績單")
-        st.metric("準確率 (Accuracy)", f"{res['acc']*100:.1f}%", help="整體預測對的機率")
-        st.metric("召回率 (Recall)", f"{res['recall']*100:.1f}%", help="真正想離職的人，你抓出了多少？(這對HR最重要)")
+        c1, c2 = st.columns(2)
+        c1.metric("準確率 (Accuracy)", f"{res['acc']*100:.1f}%")
+        c2.metric("召回率 (Recall)", f"{res['recall']*100:.1f}%", delta_color="inverse")
         
-        if res['recall'] < 0.3:
-            st.error("⚠️ 警告：你的模型雖然準確率高，但幾乎抓不到離職者 (Recall 低)！這在 HR 領域是不及格的。請嘗試調整參數或處理資料不平衡。")
-        else:
-            st.success("✅ 模型表現不錯！能夠有效識別潛在離職風險。")
-            
-        # 顯示特徵重要性
-        feat_importances = pd.Series(res['model'].feature_importances_, index=res['features'])
+        st.write("---")
         st.write("**對離職影響最大的前 5 個特徵：**")
+        feat_importances = pd.Series(res['model'].feature_importances_, index=res['features'])
         st.bar_chart(feat_importances.nlargest(5))
 
 # ==========================================
-# 5. 商業策略提案 (Business Case)
+# 5. 策略提案
 # ==========================================
 st.divider()
-st.header("3. 策略提案 (請填寫)")
-st.write("數據不會告訴你怎麼做，**人**才會。請根據上述分析，寫下各組的策略。")
-
-st.text_area("Q1: 根據熱圖與模型，哪三個因素是導致離職的主因？", placeholder="例如：1. 加班 (OverTime)  2. 月薪 (MonthlyIncome) ...")
-st.text_area("Q2: 針對這些主因，你們組建議公司採取什麼具體行動？", placeholder="例如：針對加班超過 10 小時的員工，強制實施週五無會議日...")
+st.header("3. 策略提案")
+st.text_area("Q1: 根據數據，哪三個因素是導致離職的主因？")
+st.text_area("Q2: 針對這些主因，建議採取的具體行動？")
