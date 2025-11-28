@@ -2,160 +2,191 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# 設定網頁配置
-st.set_page_config(page_title="HR 策略選才競賽", layout="wide")
+# 設定頁面
+st.set_page_config(page_title="循證選才模擬器 (Evidence-Based)", layout="wide")
 
 # ==========================================
-# 1. 側邊欄：老師設定區 (上帝視角)
+# 1. 知識庫與參數設定 (基於 Schmidt & Hunter 研究)
 # ==========================================
-st.sidebar.title("👨‍🏫 老師控制台 (God Mode)")
-st.sidebar.markdown("這裡設定「什麼樣的人才才是真正好的」。學生看不到這裡的數值，他們必須從個案中去推敲。")
+# 真實效度係數 (Validity Coefficients) - 這是學術界的「真相」
+# 參考資料: Schmidt, F. L., & Hunter, J. E. (1998). The validity and utility of selection methods.
+VALIDITY_MAP = {
+    "GMA": 0.51,        # 認知能力 (最高效度)
+    "Structured": 0.51, # 結構化面試 (高效度)
+    "Unstructured": 0.14, # 非結構化面試 (低效度陷阱)
+    "Conscientiousness": 0.31, # 盡責性 (人格中預測力最高)
+    "Peer_Review": 0.40, # 同儕評估/工作試樣
+    "Reference": 0.26   # 推薦信
+}
 
-with st.sidebar.expander("🔐 點擊展開/隱藏 真實績效邏輯", expanded=False):
-    st.markdown("### 設定「真實績效」權重 (True Performance Model)")
-    st.info("請根據您的個案情境調整。例如：如果是業務職缺，溝通的真實權重應該很高。")
-    
-    # 老師設定權重 (這些是「效標」，決定了誰入職後表現好)
-    true_w_tech = st.number_input("技術能力的真實貢獻度", 0.0, 1.0, 0.3, 0.1, key="t_tech")
-    true_w_comm = st.number_input("溝通能力的真實貢獻度", 0.0, 1.0, 0.3, 0.1, key="t_comm")
-    true_w_culture = st.number_input("文化契合的真實貢獻度", 0.0, 1.0, 0.2, 0.1, key="t_culture")
-    true_w_luck = st.number_input("運氣/隨機因素 (誤差)", 0.0, 0.5, 0.1, 0.05, key="t_luck")
-    
-    st.markdown("---")
-    st.write("**面試分數的效度設定：**")
-    interview_validity = st.slider("面試官看人準嗎？(面試分數與真實績效的相關性)", 0.0, 1.0, 0.3)
-    st.caption("0.0=面試純屬瞎猜, 1.0=面試官完全能看透真實能力")
-
-# ==========================================
-# 2. 系統後端：生成 1000 位候選人
-# ==========================================
-@st.cache_data
-def generate_data(t_tech, t_comm, t_culture, t_luck, iv_validity):
-    np.random.seed(999) # 固定種子，保證每組面對的候選人庫是一樣的
-    n = 1000
-    
-    # 生成候選人的「真實能力」(這是隱藏屬性)
-    # 假設這些是上帝賦予他們的天賦
-    true_tech_ability = np.random.randint(40, 100, n)
-    true_comm_ability = np.random.randint(40, 100, n)
-    true_culture_fit = np.random.randint(40, 100, n)
-    
-    # 根據老師設定的公式，計算「真實入職後績效」
-    true_perf = (
-        true_tech_ability * t_tech +
-        true_comm_ability * t_comm +
-        true_culture_fit * t_culture +
-        np.random.randint(-10, 10, n) * t_luck # 隨機誤差
-    )
-    
-    # 生成「甄選指標」 (學生看得到的數據)
-    # 1. 測驗分數：通常與真實能力高度相關，但有誤差
-    test_tech = true_tech_ability + np.random.randint(-5, 5, n)
-    test_comm = true_comm_ability + np.random.randint(-10, 10, n)
-    test_culture = true_culture_fit + np.random.randint(-15, 15, n)
-    
-    # 2. 履歷分數：跟真實能力有相關，但較弱
-    resume = (true_tech_ability * 0.3 + true_comm_ability * 0.3 + np.random.randint(0, 40, n))
-    
-    # 3. 面試分數：這取決於老師設定的「面試效度」
-    # 如果效度高，面試分數就接近真實績效；如果效度低，就是隨機亂給
-    noise = np.random.randint(40, 100, n)
-    interview = (true_perf * iv_validity) + (noise * (1 - iv_validity))
-    
-    # 建立 DataFrame
-    df = pd.DataFrame({
-        'ID': range(1, n + 1),
-        'Resume': resume.clip(0, 100).astype(int),
-        'Interview': interview.clip(0, 100).astype(int),
-        'Tech_Test': test_tech.clip(0, 100).astype(int),
-        'Comm_Test': test_comm.clip(0, 100).astype(int),
-        'Culture_Test': test_culture.clip(0, 100).astype(int),
-        'True_Performance': true_perf # 這是最後的答案
-    })
-    
-    # 正規化真實績效到 0-100
-    df['True_Performance'] = ((df['True_Performance'] - df['True_Performance'].min()) / 
-                              (df['True_Performance'].max() - df['True_Performance'].min())) * 100
-    return df
-
-# 生成資料
-df = generate_data(true_w_tech, true_w_comm, true_w_culture, true_w_luck, interview_validity)
-
-# ==========================================
-# 3. 學生操作區 (主要介面)
-# ==========================================
-
-st.title("🏆 HR 策略選才競賽")
-st.markdown(f"""
-請各組根據個案策略，決定你們的**篩選演算法**。
-目標：找出系統中 **真實績效 (True Performance)** 最高的 5 位人才。
+st.title("🧬 Evidence-Based HR：科學選才模擬實驗室")
+st.markdown("""
+### 專題背景
+這不是運氣遊戲，這是基於 **Schmidt & Hunter (1998)** 統合分析的科學模擬。
+你們的任務是為一家跨國企業挑選 **「儲備幹部 (MA)」**。
+資料庫中有真實的測評數據，請決定你們要採信哪些工具來預測候選人的未來績效。
 """)
 
-# 分組選擇
-group_id = st.selectbox("📌 請選擇組別：", ["Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6"])
+# ==========================================
+# 2. 側邊欄：老師設定 (God Mode)
+# ==========================================
+with st.sidebar.expander("🔐 老師專用設定 (控制真實權重)"):
+    st.write("在此微調該職位的核心需求 (影響真實績效的公式)")
+    
+    # 預設值是基於一般管理職位 (MA)
+    role_w_iq = st.slider("認知能力 (IQ) 的重要性", 0.0, 1.0, 0.5)
+    role_w_personality = st.slider("人格特質 (盡責性) 的重要性", 0.0, 1.0, 0.3)
+    role_w_social = st.slider("人際互動 (結構化面試) 的重要性", 0.0, 1.0, 0.4)
+    
+    st.info("提示：非結構化面試(憑感覺)的參數已被系統鎖定為低效度，用來測試學生是否會掉入陷阱。")
 
-st.divider()
+# ==========================================
+# 3. 數據生成引擎
+# ==========================================
+@st.cache_data
+def generate_real_candidates(n=1000, w_iq=0.5, w_pers=0.3, w_soc=0.4):
+    np.random.seed(42)
+    
+    # 1. 生成潛在變項 (Latent Variables) - 這些是候選人真正的素質
+    # 智力 (G)
+    true_g = np.random.normal(0, 1, n) 
+    # 盡責性 (Conscientiousness)
+    true_c = np.random.normal(0, 1, n)
+    # 社交技能 (Social Skill)
+    true_s = np.random.normal(0, 1, n)
+    
+    # 2. 計算「真實工作績效」 (True Job Performance)
+    # 這是我們最後要驗證的標準，基於老師設定的權重
+    performance_score = (true_g * w_iq) + (true_c * w_pers) + (true_s * w_soc) + np.random.normal(0, 0.5, n)
+    
+    # 正規化績效到 0-100
+    performance_score = ((performance_score - performance_score.min()) / 
+                         (performance_score.max() - performance_score.min())) * 100
+    
+    # 3. 生成「測評工具數據」 (Observed Variables)
+    # 模擬真實世界的測量誤差 (Measurement Error)
+    
+    # [工具 A] 認知能力測驗 (如 Wonderlic/SHL) - 信度高，與 G 高度相關
+    test_gma = true_g * 0.9 + np.random.normal(0, 0.3, n)
+    
+    # [工具 B] 五大人格測驗 (如 Hogan) - 測量盡責性
+    test_big5 = true_c * 0.8 + np.random.normal(0, 0.4, n)
+    
+    # [工具 C] 結構化面試 (Structured Interview) - 有效測量社交與職能
+    test_structured = true_s * 0.7 + true_g * 0.3 + np.random.normal(0, 0.4, n)
+    
+    # [工具 D] 非結構化面試 (Unstructured Interview) - 這是陷阱！
+    # 往往測到的是「外向性」或「面試官偏見」，跟真實績效關聯低
+    bias = np.random.normal(0, 1, n) # 面試官隨機喜好
+    test_unstructured = (true_s * 0.2) + (bias * 0.8) # 大部分是雜訊
+    
+    # [工具 E] 情境判斷測驗 (SJT) - 混合了智力與經驗
+    test_sjt = true_g * 0.4 + true_c * 0.3 + true_s * 0.3 + np.random.normal(0, 0.5, n)
 
-col1, col2 = st.columns([1, 1])
+    # 轉成 DataFrame 並將分數轉為 T分數或常模 (50-100)
+    df = pd.DataFrame({
+        'Candidate_ID': range(1, n + 1),
+        'GMA_Score': (test_gma * 10 + 70).clip(40, 99).astype(int), # 認知能力
+        'Big5_Conscientiousness': (test_big5 * 10 + 70).clip(40, 99).astype(int), # 盡責性
+        'Structured_Interview': (test_structured * 10 + 70).clip(40, 99).astype(int), # 結構化
+        'Unstructured_Interview': (test_unstructured * 10 + 70).clip(40, 99).astype(int), # 非結構化 (陷阱)
+        'SJT_Score': (test_sjt * 10 + 70).clip(40, 99).astype(int), # 情境判斷
+        'True_Performance': performance_score
+    })
+    
+    return df
+
+# 載入資料
+df = generate_real_candidates(1000, role_w_iq, role_w_personality, role_w_social)
+
+# ==========================================
+# 4. 學生操作區：決策儀表板
+# ==========================================
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.subheader(f"🛠️ {group_id} 的策略設定")
-    st.write("請分配 100% 的權重給以下指標：")
+    st.subheader("🛠️ 建立甄選模型")
+    st.write("請決定各項工具在最終決策中的**權重 (%)**。")
+    st.caption("提示：根據研究，並非所有工具都一樣有效。")
     
-    s_resume = st.slider("履歷分數 (Resume)", 0, 100, 10)
-    s_interview = st.slider("面試分數 (Interview)", 0, 100, 40)
-    s_tech = st.slider("技術測驗 (Tech Test)", 0, 100, 20)
-    s_comm = st.slider("溝通測驗 (Comm Test)", 0, 100, 20)
-    s_culture = st.slider("文化測驗 (Culture Test)", 0, 100, 10)
+    w_gma = st.number_input("1. 認知能力測驗 (GMA, 如 Wonderlic)", 0, 100, 0, help="測量學習能力、邏輯推理。成本低，學術效度高。")
+    w_big5 = st.number_input("2. 五大人格-盡責性 (Big5, 如 Hogan)", 0, 100, 0, help="測量責任感、成就動機。預測工作表現的穩定指標。")
+    w_struct = st.number_input("3. 結構化面試 (Structured Interview)", 0, 100, 0, help="基於職能的標準化提問。成本高，效度高。")
+    w_unstruct = st.number_input("4. 傳統非結構化面試 (Unstructured)", 0, 100, 50, help="憑面試官直覺的聊天。成本高，但效度...？")
+    w_sjt = st.number_input("5. 情境判斷測驗 (SJT)", 0, 100, 0, help="模擬職場情境的紙筆測驗。")
     
-    total = s_resume + s_interview + s_tech + s_comm + s_culture
-    if total != 100:
-        st.error(f"目前總和：{total}%。請調整至 100% 才能送出！")
-        run = False
+    total_w = w_gma + w_big5 + w_struct + w_unstruct + w_sjt
+    
+    if total_w != 100:
+        st.error(f"目前權重總和: {total_w}% (必須等於 100%)")
+        can_run = False
     else:
-        st.success(f"目前總和：{total}%。設定完成！")
-        run = st.button(f"🚀 {group_id} 開始招募", type="primary")
+        st.success("權重配置完成！")
+        can_run = True
+        
+    st.divider()
+    group_name = st.text_input("輸入組別名稱 (用於排行榜)", "Group A")
+    run_btn = st.button("🚀 送出甄選策略", type="primary", disabled=not can_run)
 
 with col2:
-    if run:
-        # 計算學生預測的分數
-        df['Student_Score'] = (
-            df['Resume'] * s_resume +
-            df['Interview'] * s_interview +
-            df['Tech_Test'] * s_tech +
-            df['Comm_Test'] * s_comm +
-            df['Culture_Test'] * s_culture
+    if run_btn:
+        # 計算學生模型的預測總分
+        df['Selection_Score'] = (
+            df['GMA_Score'] * w_gma +
+            df['Big5_Conscientiousness'] * w_big5 +
+            df['Structured_Interview'] * w_struct +
+            df['Unstructured_Interview'] * w_unstruct +
+            df['SJT_Score'] * w_sjt
         ) / 100
         
-        # 挑選前 5 名
-        top_5 = df.sort_values(by='Student_Score', ascending=False).head(5)
+        # 選出前 5 名
+        top_picks = df.sort_values(by='Selection_Score', ascending=False).head(5)
         
-        # 計算成績
-        avg_perf = top_5['True_Performance'].mean()
-        
-        # 計算理論最佳值 (滿分)
+        # 計算結果
+        avg_perf = top_picks['True_Performance'].mean()
         best_possible = df.sort_values(by='True_Performance', ascending=False).head(5)['True_Performance'].mean()
+        efficiency = (avg_perf / best_possible) * 100
         
-        score = (avg_perf / best_possible) * 100
+        st.subheader(f"📊 {group_name} 的甄選結果報告")
         
-        st.subheader("📊 招募結果")
-        st.metric(label=f"{group_id} 的最終得分 (ROI)", value=f"{score:.1f} 分")
+        # 顯示關鍵指標
+        m1, m2, m3 = st.columns(3)
+        m1.metric("選入者平均績效", f"{avg_perf:.1f}")
+        m2.metric("策略效能 (ROI)", f"{efficiency:.1f}%")
+        m3.metric("最佳可能績效", f"{best_possible:.1f}")
         
-        st.write("你們錄取的 5 位候選人：")
-        st.dataframe(top_5[['ID', 'Student_Score', 'True_Performance', 'Interview', 'Tech_Test', 'Comm_Test']], hide_index=True)
+        st.write("📋 **錄取名單明細：**")
+        st.dataframe(top_picks[['Candidate_ID', 'Selection_Score', 'True_Performance', 'GMA_Score', 'Unstructured_Interview', 'Structured_Interview']], hide_index=True)
         
-        if score > 90:
-            st.balloons()
-            st.success("太厲害了！你們的策略與公司需求的適配度極高！")
-        elif score < 70:
-            st.warning("分數偏低。原因可能是：你們看重的指標（例如面試或履歷），其實無法預測這個職位的真實績效。")
+        # === 關鍵教學點：相關係數分析 ===
+        st.markdown("---")
+        st.subheader("💡 AI 深度分析 (Debriefing)")
+        st.write("讓我們來看看你們採用的指標，與真實績效的相關性 (Correlation)：")
+        
+        # 計算相關係數矩陣
+        corr_data = df[['True_Performance', 'GMA_Score', 'Unstructured_Interview', 'Structured_Interview', 'Big5_Conscientiousness']].corr()
+        perf_corr = corr_data['True_Performance'].drop('True_Performance')
+        
+        st.bar_chart(perf_corr)
+        
+        st.info("""
+        **圖表解讀：**
+        * 棒狀圖越高，代表該工具越能準確預測績效。
+        * 請注意看 **GMA (認知能力)** 與 **Unstructured Interview (非結構化面試)** 的差距。
+        * 你們是否過度依賴了「非結構化面試」？這就是許多企業選錯人的主因。
+        """)
+        
+        if w_unstruct > 30:
+            st.warning("⚠️ 警告：您的策略高度依賴「非結構化面試」。研究顯示，這種面試容易受到第一印象、月暈效應影響，預測力遠低於智力測驗或結構化面試。")
+        elif w_gma > 30 and w_struct > 20:
+            st.success("✅ 專家級策略！您結合了預測力最高的「認知能力」與「結構化面試」，這是目前科學上公認最佳的組合。")
 
-# ==========================================
-# 4. 揭曉答案區 (教學用)
-# ==========================================
-st.divider()
-with st.expander("🕵️ 老師專用：揭曉背後邏輯 (事後檢討用)"):
-    st.write("### 為什麼分數是這樣？")
-    st.write(f"老師設定的真實績效權重為：技術 {true_w_tech}, 溝通 {true_w_comm}, 文化 {true_w_culture}")
-    st.write(f"而該組學生的權重為：技術 {s_tech/100}, 溝通 {s_comm/100}, 文化 {s_culture/100}")
-    st.write("分數差異來自於：**學生的選擇策略** 是否 **對齊 (Align)** 了 **真實的職位需求**。")
+    else:
+        st.info("👈 請在左側輸入權重並開始模擬。")
+        st.markdown("""
+        #### 參考工具說明：
+        * **GMA Score:** 類似 Wonderlic 人員測驗，測量一般智能。
+        * **Big5 Conscientiousness:** 類似 Hogan HPI 中的「審慎性」，測量自律與條理。
+        * **Structured Interview:** 類似 DDI 的行為面試法 (STAR)，有固定評分標準。
+        * **Unstructured Interview:** 傳統的「聊聊看」，容易受面試官主觀喜好影響。
+        """)
