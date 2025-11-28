@@ -2,132 +2,160 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# 設定網頁標題
-st.set_page_config(page_title="HR 策略選才模擬器", layout="wide")
-
-st.title("🎯 策略性人力資源管理：Moneyball 選才模擬器")
-st.markdown("""
-### 專題說明
-請扮演人資長，根據你們小組分配到的公司策略（創新、成本、或客戶導向），
-調整左側的 **「選才權重」** 與 **「篩選門檻」**。
-系統將從 1000 位候選人中，挑出最符合你們策略的前 5 名。
-""")
+# 設定網頁配置
+st.set_page_config(page_title="HR 策略選才競賽", layout="wide")
 
 # ==========================================
-# 1. 系統後端：生成數據 (與之前邏輯相同)
+# 1. 側邊欄：老師設定區 (上帝視角)
+# ==========================================
+st.sidebar.title("👨‍🏫 老師控制台 (God Mode)")
+st.sidebar.markdown("這裡設定「什麼樣的人才才是真正好的」。學生看不到這裡的數值，他們必須從個案中去推敲。")
+
+with st.sidebar.expander("🔐 點擊展開/隱藏 真實績效邏輯", expanded=False):
+    st.markdown("### 設定「真實績效」權重 (True Performance Model)")
+    st.info("請根據您的個案情境調整。例如：如果是業務職缺，溝通的真實權重應該很高。")
+    
+    # 老師設定權重 (這些是「效標」，決定了誰入職後表現好)
+    true_w_tech = st.number_input("技術能力的真實貢獻度", 0.0, 1.0, 0.3, 0.1, key="t_tech")
+    true_w_comm = st.number_input("溝通能力的真實貢獻度", 0.0, 1.0, 0.3, 0.1, key="t_comm")
+    true_w_culture = st.number_input("文化契合的真實貢獻度", 0.0, 1.0, 0.2, 0.1, key="t_culture")
+    true_w_luck = st.number_input("運氣/隨機因素 (誤差)", 0.0, 0.5, 0.1, 0.05, key="t_luck")
+    
+    st.markdown("---")
+    st.write("**面試分數的效度設定：**")
+    interview_validity = st.slider("面試官看人準嗎？(面試分數與真實績效的相關性)", 0.0, 1.0, 0.3)
+    st.caption("0.0=面試純屬瞎猜, 1.0=面試官完全能看透真實能力")
+
+# ==========================================
+# 2. 系統後端：生成 1000 位候選人
 # ==========================================
 @st.cache_data
-def generate_candidates(num_candidates=1000):
-    np.random.seed(42)
-    data = {
-        'ID': range(1, num_candidates + 1),
-        'Resume': np.random.randint(50, 100, num_candidates),       # 履歷分數
-        'Interview': np.random.randint(50, 100, num_candidates),    # 面試官評分
-        'Tech_Test': np.random.randint(0, 100, num_candidates),     # 技術測驗
-        'Culture': np.random.randint(0, 100, num_candidates),       # 文化契合度
-        'Comm': np.random.randint(0, 100, num_candidates),          # 溝通能力
-        'Uni_Tier': np.random.choice([1, 2, 3], num_candidates, p=[0.2, 0.5, 0.3]) # 學校等級
-    }
-    df = pd.DataFrame(data)
+def generate_data(t_tech, t_comm, t_culture, t_luck, iv_validity):
+    np.random.seed(999) # 固定種子，保證每組面對的候選人庫是一樣的
+    n = 1000
     
-    # 上帝視角：真實績效計算 (學生看不到)
-    # 邏輯：技術與溝通最重要，面試分數關聯低
-    df['True_Performance'] = (
-        df['Tech_Test'] * 0.4 + 
-        df['Comm'] * 0.3 + 
-        df['Culture'] * 0.2 + 
-        np.random.randint(-10, 10, num_candidates)
+    # 生成候選人的「真實能力」(這是隱藏屬性)
+    # 假設這些是上帝賦予他們的天賦
+    true_tech_ability = np.random.randint(40, 100, n)
+    true_comm_ability = np.random.randint(40, 100, n)
+    true_culture_fit = np.random.randint(40, 100, n)
+    
+    # 根據老師設定的公式，計算「真實入職後績效」
+    true_perf = (
+        true_tech_ability * t_tech +
+        true_comm_ability * t_comm +
+        true_culture_fit * t_culture +
+        np.random.randint(-10, 10, n) * t_luck # 隨機誤差
     )
-    df.loc[df['Uni_Tier'] == 1, 'True_Performance'] += 5
-    df.loc[df['Uni_Tier'] == 3, 'True_Performance'] -= 5
     
-    # 正規化到 0-100
+    # 生成「甄選指標」 (學生看得到的數據)
+    # 1. 測驗分數：通常與真實能力高度相關，但有誤差
+    test_tech = true_tech_ability + np.random.randint(-5, 5, n)
+    test_comm = true_comm_ability + np.random.randint(-10, 10, n)
+    test_culture = true_culture_fit + np.random.randint(-15, 15, n)
+    
+    # 2. 履歷分數：跟真實能力有相關，但較弱
+    resume = (true_tech_ability * 0.3 + true_comm_ability * 0.3 + np.random.randint(0, 40, n))
+    
+    # 3. 面試分數：這取決於老師設定的「面試效度」
+    # 如果效度高，面試分數就接近真實績效；如果效度低，就是隨機亂給
+    noise = np.random.randint(40, 100, n)
+    interview = (true_perf * iv_validity) + (noise * (1 - iv_validity))
+    
+    # 建立 DataFrame
+    df = pd.DataFrame({
+        'ID': range(1, n + 1),
+        'Resume': resume.clip(0, 100).astype(int),
+        'Interview': interview.clip(0, 100).astype(int),
+        'Tech_Test': test_tech.clip(0, 100).astype(int),
+        'Comm_Test': test_comm.clip(0, 100).astype(int),
+        'Culture_Test': test_culture.clip(0, 100).astype(int),
+        'True_Performance': true_perf # 這是最後的答案
+    })
+    
+    # 正規化真實績效到 0-100
     df['True_Performance'] = ((df['True_Performance'] - df['True_Performance'].min()) / 
                               (df['True_Performance'].max() - df['True_Performance'].min())) * 100
-    df['True_Performance'] = df['True_Performance'].round(1)
-    
     return df
 
-df = generate_candidates()
+# 生成資料
+df = generate_data(true_w_tech, true_w_comm, true_w_culture, true_w_luck, interview_validity)
 
 # ==========================================
-# 2. 左側欄：學生操作區 (控制面板)
-# ==========================================
-st.sidebar.header("⚙️ 策略參數設定")
-
-st.sidebar.subheader("1. 設定權重 (權重總和建議為 100%)")
-w_resume = st.sidebar.slider("履歷分數 (Resume) 權重", 0.0, 1.0, 0.1, 0.05)
-w_interview = st.sidebar.slider("面試官評分 (Interview) 權重", 0.0, 1.0, 0.4, 0.05)
-w_tech = st.sidebar.slider("技術測驗 (Tech Test) 權重", 0.0, 1.0, 0.2, 0.05)
-w_culture = st.sidebar.slider("文化契合 (Culture) 權重", 0.0, 1.0, 0.1, 0.05)
-w_comm = st.sidebar.slider("溝通能力 (Comm) 權重", 0.0, 1.0, 0.2, 0.05)
-
-total_weight = w_resume + w_interview + w_tech + w_culture + w_comm
-st.sidebar.info(f"目前權重總和: {total_weight:.2f} (建議調整至 1.0)")
-
-st.sidebar.subheader("2. 設定門檻 (Filters)")
-min_tech = st.sidebar.number_input("技術分數最低門檻", 0, 100, 60)
-min_comm = st.sidebar.number_input("溝通分數最低門檻", 0, 100, 0)
-
-# 按鈕
-run_btn = st.sidebar.button("🚀 執行演算法並招募人才", type="primary")
-
-# ==========================================
-# 3. 主畫面：顯示結果
+# 3. 學生操作區 (主要介面)
 # ==========================================
 
-if run_btn:
-    # --- 演算法邏輯 ---
-    # 1. 門檻篩選
-    filtered_df = df[(df['Tech_Test'] >= min_tech) & (df['Comm'] >= min_comm)].copy()
+st.title("🏆 HR 策略選才競賽")
+st.markdown(f"""
+請各組根據個案策略，決定你們的**篩選演算法**。
+目標：找出系統中 **真實績效 (True Performance)** 最高的 5 位人才。
+""")
+
+# 分組選擇
+group_id = st.selectbox("📌 請選擇組別：", ["Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6"])
+
+st.divider()
+
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.subheader(f"🛠️ {group_id} 的策略設定")
+    st.write("請分配 100% 的權重給以下指標：")
     
-    if len(filtered_df) < 5:
-        st.error(f"篩選條件太嚴格！只剩下 {len(filtered_df)} 人，不足以招募 5 人。請降低門檻。")
+    s_resume = st.slider("履歷分數 (Resume)", 0, 100, 10)
+    s_interview = st.slider("面試分數 (Interview)", 0, 100, 40)
+    s_tech = st.slider("技術測驗 (Tech Test)", 0, 100, 20)
+    s_comm = st.slider("溝通測驗 (Comm Test)", 0, 100, 20)
+    s_culture = st.slider("文化測驗 (Culture Test)", 0, 100, 10)
+    
+    total = s_resume + s_interview + s_tech + s_comm + s_culture
+    if total != 100:
+        st.error(f"目前總和：{total}%。請調整至 100% 才能送出！")
+        run = False
     else:
-        # 2. 計算預測分數
-        filtered_df['Predicted_Score'] = (
-            filtered_df['Resume'] * w_resume +
-            filtered_df['Interview'] * w_interview +
-            filtered_df['Tech_Test'] * w_tech +
-            filtered_df['Culture'] * w_culture +
-            filtered_df['Comm'] * w_comm
-        )
+        st.success(f"目前總和：{total}%。設定完成！")
+        run = st.button(f"🚀 {group_id} 開始招募", type="primary")
+
+with col2:
+    if run:
+        # 計算學生預測的分數
+        df['Student_Score'] = (
+            df['Resume'] * s_resume +
+            df['Interview'] * s_interview +
+            df['Tech_Test'] * s_tech +
+            df['Comm_Test'] * s_comm +
+            df['Culture_Test'] * s_culture
+        ) / 100
         
-        # 3. 排序並取前 5
-        top_picks = filtered_df.sort_values(by='Predicted_Score', ascending=False).head(5)
+        # 挑選前 5 名
+        top_5 = df.sort_values(by='Student_Score', ascending=False).head(5)
         
-        # --- 顯示結果 ---
-        st.subheader("📋 您的 AI 招募結果 (Top 5)")
-        st.dataframe(
-            top_picks[['ID', 'Predicted_Score', 'Resume', 'Interview', 'Tech_Test', 'Culture', 'Comm', 'True_Performance']],
-            use_container_width=True,
-            hide_index=True
-        )
+        # 計算成績
+        avg_perf = top_5['True_Performance'].mean()
         
-        # --- 績效分析 ---
-        avg_perf = top_picks['True_Performance'].mean()
-        
-        # 計算理論最佳值 (上帝視角)
+        # 計算理論最佳值 (滿分)
         best_possible = df.sort_values(by='True_Performance', ascending=False).head(5)['True_Performance'].mean()
-        efficiency = (avg_perf / best_possible) * 100
         
-        st.divider()
-        col1, col2 = st.columns(2)
+        score = (avg_perf / best_possible) * 100
         
-        with col1:
-            st.metric(label="錄取者平均真實績效 (事后驗證)", value=f"{avg_perf:.1f} 分")
+        st.subheader("📊 招募結果")
+        st.metric(label=f"{group_id} 的最終得分 (ROI)", value=f"{score:.1f} 分")
         
-        with col2:
-            st.metric(label="策略效能 (ROI)", value=f"{efficiency:.1f} %", delta=f"{efficiency-100:.1f}% 與最佳解差距")
-            
-        # --- 老師的講評建議 (根據結果自動生成) ---
-        st.warning("💡 **分析與反思：**")
-        if efficiency > 95:
-            st.write("太強了！你們的策略幾乎找到了全市場最優秀的人才！你們看重了哪些指標？")
-        elif avg_perf < best_possible * 0.8:
-            st.write("績效不如預期。可能原因：你們是否過度相信「面試官評分」或「履歷」，而忽略了更能預測績效的「測驗分數」？")
-        else:
-            st.write("表現不錯，但還有優化空間。試著調整權重，看看能不能更接近 100% 的最佳解。")
-            
-else:
-    st.info("👈 請在左側調整參數，並點擊「執行演算法」開始模擬。")
+        st.write("你們錄取的 5 位候選人：")
+        st.dataframe(top_5[['ID', 'Student_Score', 'True_Performance', 'Interview', 'Tech_Test', 'Comm_Test']], hide_index=True)
+        
+        if score > 90:
+            st.balloons()
+            st.success("太厲害了！你們的策略與公司需求的適配度極高！")
+        elif score < 70:
+            st.warning("分數偏低。原因可能是：你們看重的指標（例如面試或履歷），其實無法預測這個職位的真實績效。")
+
+# ==========================================
+# 4. 揭曉答案區 (教學用)
+# ==========================================
+st.divider()
+with st.expander("🕵️ 老師專用：揭曉背後邏輯 (事後檢討用)"):
+    st.write("### 為什麼分數是這樣？")
+    st.write(f"老師設定的真實績效權重為：技術 {true_w_tech}, 溝通 {true_w_comm}, 文化 {true_w_culture}")
+    st.write(f"而該組學生的權重為：技術 {s_tech/100}, 溝通 {s_comm/100}, 文化 {s_culture/100}")
+    st.write("分數差異來自於：**學生的選擇策略** 是否 **對齊 (Align)** 了 **真實的職位需求**。")
