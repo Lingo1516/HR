@@ -1,212 +1,174 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import altair as alt
+import plotly.express as px
+import plotly.figure_factory as ff
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-st.set_page_config(page_title="HR 利潤中心大戰 (Tournament)", layout="wide")
+st.set_page_config(page_title="IBM HR 離職預測黑客松", layout="wide")
 
-# ==========================================
-# 1. 初始化模擬環境 (Market Setup)
-# ==========================================
-# 設定 100 位潛在候選人 (所有組別共用的市場)
-@st.cache_data
-def generate_market_talent():
-    np.random.seed(2024) # 固定種子，確保公平
-    n = 100
-    data = pd.DataFrame({
-        'ID': range(1, n + 1),
-        'Ability': np.random.normal(70, 15, n).clip(40, 100), # 能力值 (影響產出)
-        'Motivation': np.random.normal(70, 15, n).clip(40, 100), # 動機 (影響產出)
-        'Market_Value': np.random.normal(60000, 15000, n).clip(35000, 120000) # 市場行情價
-    })
-    # 真實潛力 (True Potential) = 能力 x 動機
-    data['Potential_Revenue'] = (data['Ability'] * data['Motivation']) * 20 # 預估幫公司賺的錢
-    return data
-
-market_data = generate_market_talent()
-
-# ==========================================
-# 2. 遊戲標題與規則
-# ==========================================
-st.title("🏆 HR 策略競賽：誰是全場最賺錢的 HR 團隊？")
+st.title("📊 IBM HR Analytics：離職數據黑客松")
 st.markdown("""
-### 競賽規則
-各組皆為一家相同規模的新創公司，需從市場上招募 **20 位員工**。
-獲勝標準只有一個：**年度淨利 (Net Profit)**。
+### 競賽任務：
+我們使用了 **IBM 真實員工數據集**。請各組利用此分析工具，找出 **「導致員工離職的 3 大關鍵元兇」**，並據此提出改善策略。
 
-$$ \text{年度淨利} = \text{員工總產出 (Revenue)} - \text{總薪資成本 (Cost)} - \text{離職罰款 (Turnover Cost)} $$
-
-**你們需要制定三個策略參數：**
-1.  **選才門檻 (Quality)**：你們只要前幾 % 的頂尖人才？(越高越難找，且通常越貴)
-2.  **薪資定位 (Pay Strategy)**：你們給薪水是市場行情的多少倍？(給低省錢但會離職，給高留人但傷本)
-3.  **績效獎金 (Incentive)**：你們願意撥出多少利潤當獎金？(能提升員工產出)
+**評分標準：**
+1.  **數據洞察 (40%)**：是否正確解讀數據？(例如：發現加班對離職的影響)
+2.  **商業策略 (40%)**：提出的解決方案是否可行？(例如：針對加班者提供補休或加班費調整)
+3.  **預測準度 (20%)**：利用 AI 模型預測誰會離職的準確率。
 """)
 
+# ==========================================
+# 1. 資料上傳區
+# ==========================================
+st.sidebar.header("📂 步驟 1：上傳資料集")
+uploaded_file = st.sidebar.file_uploader("請上傳 IBM-HR-Employee-Attrition.csv", type=["csv"])
+
+# 預設載入範例資料 (如果老師還沒下載，先產生假資料以免報錯)
+@st.cache_data
+def load_sample_data():
+    # 這裡只是為了演示，實際上請學生上傳 Kaggle 下載的 csv
+    return pd.DataFrame() 
+
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("資料載入成功！")
+else:
+    st.info("👆 請從側邊欄上傳 Kaggle 的 IBM HR csv 檔案。")
+    st.stop()
+
+# ==========================================
+# 2. 數據概覽 (Data Overview)
+# ==========================================
+with st.expander("🔍 點擊檢視原始資料 (Raw Data)", expanded=False):
+    st.dataframe(df.head(10))
+    st.write(f"總筆數：{df.shape[0]} 位員工 | 欄位數：{df.shape[1]}")
+
+# ==========================================
+# 3. 自動化關聯分析 (Correlation Analysis)
+# ==========================================
+st.header("1. 離職原因探索 (Exploratory Data Analysis)")
+st.write("系統自動分析各變數與 **Attrition (離職)** 的關係。")
+
+# 將 Attrition 轉換為數字 (Yes=1, No=0) 以便計算
+if 'Attrition' in df.columns:
+    df['Attrition_Num'] = df['Attrition'].apply(lambda x: 1 if x == 'Yes' else 0)
+    
+    # 選擇要分析的因子
+    factors = st.multiselect("請選擇你們懷疑的影響因子：", 
+                             ['Age', 'DailyRate', 'DistanceFromHome', 'EnvironmentSatisfaction', 
+                              'HourlyRate', 'JobInvolvement', 'JobLevel', 'JobSatisfaction', 
+                              'MonthlyIncome', 'NumCompaniesWorked', 'OverTime', 
+                              'PercentSalaryHike', 'TotalWorkingYears', 'WorkLifeBalance', 
+                              'YearsAtCompany', 'YearsInCurrentRole', 'YearsSinceLastPromotion'],
+                             default=['MonthlyIncome', 'Age', 'DistanceFromHome', 'JobSatisfaction'])
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # 視覺化：離職 vs 因子
+        target_factor = st.selectbox("詳細觀察哪一個因子？", factors)
+        
+        # 如果是數值型 (如薪水)
+        if df[target_factor].dtype != 'object':
+            fig = px.box(df, x="Attrition", y=target_factor, color="Attrition", 
+                         title=f"離職者與在職者的 {target_factor} 差異分析",
+                         points="all")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # 統計檢定提示
+            avg_yes = df[df['Attrition']=='Yes'][target_factor].mean()
+            avg_no = df[df['Attrition']=='No'][target_factor].mean()
+            diff_pct = ((avg_yes - avg_no) / avg_no) * 100
+            
+            st.info(f"💡 數據洞察：離職者的平均 **{target_factor}** 為 {avg_yes:.1f}，比在職者 ({avg_no:.1f}) 差異約 **{diff_pct:.1f}%**。")
+            
+        else:
+            # 如果是類別型 (如 OverTime)
+            fig = px.histogram(df, x=target_factor, color="Attrition", barmode="group",
+                               title=f"{target_factor} 分佈對離職的影響")
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("🔥 相關性熱圖")
+        st.write("顏色越紅，代表與「離職」相關性越強 (正相關)；越藍代表越能「留任」 (負相關)。")
+        
+        # 計算相關係數
+        # 處理 OverTime 這種文字欄位
+        df_corr = df.copy()
+        if 'OverTime' in df_corr.columns:
+            df_corr['OverTime'] = df_corr['OverTime'].apply(lambda x: 1 if x == 'Yes' else 0)
+            
+        corr_cols = factors + ['Attrition_Num']
+        # 只取存在的欄位
+        valid_cols = [c for c in corr_cols if c in df_corr.columns]
+        
+        corr_matrix = df_corr[valid_cols].corr()[['Attrition_Num']].sort_values(by='Attrition_Num', ascending=False)
+        
+        fig_corr = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='RdBu_r', aspect="auto")
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+# ==========================================
+# 4. AI 離職預測模型 (Machine Learning)
+# ==========================================
 st.divider()
+st.header("2. AI 預測模型競賽")
+st.write("訓練一個機器學習模型，預測誰會離職。請調整參數以獲得最高準確率。")
 
-# ==========================================
-# 3. 策略輸入區 (六組大亂鬥)
-# ==========================================
-st.subheader("⚔️ 各組策略輸入面板")
-st.info("請老師根據各組討論結果，輸入以下參數：")
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score
 
-# 建立 6 個 Columns 對應 6 組
-cols = st.columns(6)
-groups_input = {}
+col_model_1, col_model_2 = st.columns(2)
 
-for i in range(6):
-    group_name = f"第 {i+1} 組"
-    with cols[i]:
-        st.markdown(f"#### 🚩 {group_name}")
-        
-        # 策略 1: 選才標準 (百分位數)
-        # 例如 80 代表只錄取市場上前 20% 強的人
-        q_threshold = st.number_input(f"選才門檻 (PR值)", 50, 99, 70, key=f"q_{i}", help="數值越高，只錄取能力越強的人")
-        
-        # 策略 2: 薪資定位 (Compa-Ratio)
-        # 1.0 = 符合市場行情, 1.2 = 高於市場 20%
-        pay_ratio = st.number_input(f"薪資定位 (倍率)", 0.8, 1.5, 1.0, step=0.05, key=f"p_{i}", help="1.0 為市場均價。低於 1.0 容易離職。")
-        
-        # 策略 3: 激勵強度
-        # 影響員工實際上會發揮多少潛力
-        incentive = st.number_input(f"獎金強度 (1-10)", 1, 10, 5, key=f"i_{i}", help="越高員工越賣命，但成本越高")
-        
-        groups_input[group_name] = {
-            "Threshold": q_threshold,
-            "Pay_Ratio": pay_ratio,
-            "Incentive": incentive
-        }
-
-start_battle = st.button("🚀 開始模擬對戰 (Run Simulation)", type="primary", use_container_width=True)
-
-# ==========================================
-# 4. 模擬運算核心 (Backend Logic)
-# ==========================================
-if start_battle:
-    results = []
+with col_model_1:
+    st.subheader("⚙️ 模型參數設定")
+    n_estimators = st.slider("決策樹數量 (Trees)", 10, 200, 100)
+    max_depth = st.slider("樹的深度 (Max Depth)", 1, 20, 10)
+    test_size = st.slider("測試集比例 (Test Size)", 0.1, 0.5, 0.2)
     
-    st.divider()
-    st.header("📊 戰況即時看板")
+    # 特徵工程：將類別轉數字
+    df_ml = pd.get_dummies(df.drop(['Attrition', 'EmployeeCount', 'EmployeeNumber', 'Over18', 'StandardHours'], axis=1, errors='ignore'), drop_first=True)
     
-    for g_name, strategy in groups_input.items():
-        # --- A. 招募階段 (Recruitment) ---
-        # 根據門檻篩選人才
-        # 計算綜合能力分數
-        df = market_data.copy()
-        df['Score'] = df['Ability'] * 0.6 + df['Motivation'] * 0.4
+    # 執行訓練
+    if st.button("🚀 訓練模型並預測"):
+        X = df_ml.drop('Attrition_Num', axis=1, errors='ignore')
+        y = df_ml['Attrition_Num']
         
-        # 找出該組要求的門檻分數 (例如 PR 80)
-        cutoff = np.percentile(df['Score'], strategy['Threshold'])
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
         
-        # 錄取符合條件的人 (取前 20 名)
-        hired = df[df['Score'] >= cutoff].sort_values(by='Score', ascending=False).head(20)
+        model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
         
-        if len(hired) < 20:
-            # 懲罰：如果門檻設太高導致招不滿，強迫補入平庸員工
-            n_short = 20 - len(hired)
-            fillers = df[~df['ID'].isin(hired['ID'])].sample(n_short)
-            hired = pd.concat([hired, fillers])
-            penalty_msg = " (招募不足, 系統強迫補人)"
+        acc = accuracy_score(y_test, y_pred)
+        recall = recall_score(y_test, y_pred) # 抓出離職者的能力
+        
+        st.session_state['model_result'] = {'acc': acc, 'recall': recall, 'model': model, 'features': X.columns}
+
+with col_model_2:
+    if 'model_result' in st.session_state:
+        res = st.session_state['model_result']
+        st.subheader("🏆 模型成績單")
+        st.metric("準確率 (Accuracy)", f"{res['acc']*100:.1f}%", help="整體預測對的機率")
+        st.metric("召回率 (Recall)", f"{res['recall']*100:.1f}%", help="真正想離職的人，你抓出了多少？(這對HR最重要)")
+        
+        if res['recall'] < 0.3:
+            st.error("⚠️ 警告：你的模型雖然準確率高，但幾乎抓不到離職者 (Recall 低)！這在 HR 領域是不及格的。請嘗試調整參數或處理資料不平衡。")
         else:
-            penalty_msg = ""
+            st.success("✅ 模型表現不錯！能夠有效識別潛在離職風險。")
+            
+        # 顯示特徵重要性
+        feat_importances = pd.Series(res['model'].feature_importances_, index=res['features'])
+        st.write("**對離職影響最大的前 5 個特徵：**")
+        st.bar_chart(feat_importances.nlargest(5))
 
-        # --- B. 薪酬與成本 (Compensation) ---
-        # 實際給薪 = 市場價值 * 薪資定位策略
-        hired['Actual_Salary'] = hired['Market_Value'] * strategy['Pay_Ratio']
-        # 獎金成本 = 基礎薪資 * (獎金強度 * 0.02)
-        bonus_cost_per_person = hired['Actual_Salary'] * (strategy['Incentive'] * 0.02)
-        hired['Total_Cost'] = hired['Actual_Salary'] + bonus_cost_per_person
-        
-        total_salary_cost = hired['Total_Cost'].sum()
-        
-        # --- C. 績效產出 (Performance) ---
-        # 實際產出 = 潛力 * 激勵係數
-        # 薪資給得越高，激勵越高；獎金越高，激勵越高
-        motivation_factor = (strategy['Pay_Ratio'] * 0.5) + (strategy['Incentive'] * 0.05)
-        hired['Actual_Revenue'] = hired['Potential_Revenue'] * motivation_factor
-        
-        total_revenue = hired['Actual_Revenue'].sum()
-        
-        # --- D. 離職風險 (Turnover) ---
-        # 離職機率：薪水越低、能力越高(外面搶著要)，離職率越高
-        # 簡單公式：如果 (實際薪資 / 市場價值) < 1.0，風險大增
-        hired['Retention_Prob'] = (hired['Actual_Salary'] / hired['Market_Value']) + (strategy['Incentive'] * 0.02)
-        
-        # 模擬離職 (骰子)
-        leavers = 0
-        for idx, row in hired.iterrows():
-            # 生成一個隨機數，如果大於留任機率，就離職
-            if np.random.random() > row['Retention_Prob']:
-                leavers += 1
-        
-        # 離職成本罰款 (每走一個人，損失 30,000 重置成本)
-        turnover_cost = leavers * 30000
-        
-        # --- E. 最終結算 ---
-        net_profit = total_revenue - total_salary_cost - turnover_cost
-        
-        results.append({
-            "Team": g_name,
-            "Net Profit": int(net_profit),
-            "Revenue": int(total_revenue),
-            "Cost": int(total_salary_cost),
-            "Turnover Cost": int(turnover_cost),
-            "Leavers": leavers,
-            "Strategy": f"PR{strategy['Threshold']} / x{strategy['Pay_Ratio']} / Lv{strategy['Incentive']}"
-        })
+# ==========================================
+# 5. 商業策略提案 (Business Case)
+# ==========================================
+st.divider()
+st.header("3. 策略提案 (請填寫)")
+st.write("數據不會告訴你怎麼做，**人**才會。請根據上述分析，寫下各組的策略。")
 
-    # ==========================================
-    # 5. 結果視覺化 (Leaderboard)
-    # ==========================================
-    res_df = pd.DataFrame(results).sort_values(by="Net Profit", ascending=False).reset_index(drop=True)
-    
-    # 顯示冠軍
-    winner = res_df.iloc[0]
-    st.success(f"🎉 冠軍隊伍：**{winner['Team']}**！ 年度淨利：**${winner['Net Profit']:,}**")
-    
-    # 排行榜圖表
-    c1, c2 = st.columns([2, 1])
-    
-    with c1:
-        st.markdown("### 📈 各組利潤排行榜")
-        chart = alt.Chart(res_df).mark_bar().encode(
-            x=alt.X('Net Profit', axis=alt.Axis(title='年度淨利 ($)')),
-            y=alt.Y('Team', sort='-x', axis=alt.Axis(title='組別')),
-            color=alt.Color('Net Profit', scale=alt.Scale(scheme='greens'), legend=None),
-            tooltip=['Team', 'Net Profit', 'Leavers', 'Strategy']
-        ).properties(height=300)
-        st.altair_chart(chart, use_container_width=True)
-        
-    with c2:
-        st.markdown("### 📋 詳細數據表")
-        st.dataframe(res_df[['Team', 'Net Profit', 'Leavers', 'Strategy']], hide_index=True)
-
-    # ==========================================
-    # 6. AI 戰後講評 (Debrief)
-    # ==========================================
-    st.divider()
-    st.subheader("🕵️ 顧問分析報告")
-    
-    # 分析每一組的死因或勝因
-    for i, row in res_df.iterrows():
-        team = row['Team']
-        profit = row['Net Profit']
-        leavers = row['Leavers']
-        
-        msg = f"**{team} (排名 {i+1})**："
-        
-        if profit < 0:
-            if leavers > 5:
-                msg += "❌ **嚴重虧損！** 主因是「離職率太高」。你們薪資給太低，導致人才流失，罰款吃掉了利潤。這叫「省小錢花大錢」。"
-            else:
-                msg += "❌ **嚴重虧損！** 主因是「人事成本過高」。你們薪水給太高，雖然沒人走，但員工產出的價值無法覆蓋薪水。這叫「被員工吃垮」。"
-        else:
-            if i == 0:
-                msg += "✅ **完美平衡！** 你們找到了「薪資」與「績效」的最佳甜蜜點。既留得住人，成本又控制得當。"
-            else:
-                if leavers > 3:
-                    msg += "⚠️ **還有進步空間。** 雖然賺錢，但離職人數稍多，增加了隱形成本。"
-                else:
-                    msg += "⚠️ **還有進步空間。** 團隊很穩定，但也許因為門檻設太低，員工產出爆發力不足。"
-                    
-        st.write(msg)
+st.text_area("Q1: 根據熱圖與模型，哪三個因素是導致離職的主因？", placeholder="例如：1. 加班 (OverTime)  2. 月薪 (MonthlyIncome) ...")
+st.text_area("Q2: 針對這些主因，你們組建議公司採取什麼具體行動？", placeholder="例如：針對加班超過 10 小時的員工，強制實施週五無會議日...")
