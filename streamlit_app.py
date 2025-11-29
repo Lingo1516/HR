@@ -7,10 +7,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (v9.2)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v9.5)", layout="wide")
 
 # ==========================================
-# 0. 核心數據處理 (自動轉台幣 TWD)
+# 0. 核心數據處理 (含台幣轉換)
 # ==========================================
 @st.cache_data
 def load_and_process_data(file):
@@ -52,7 +52,7 @@ def load_and_process_data(file):
         if '離職' in df.columns:
             df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '是' else 0)
 
-        # 4. ★★★ 自動薪資轉換 (USD -> TWD, x30) ★★★
+        # 4. 自動薪資轉換 (USD -> TWD, x30)
         salary_cols = ['月收入', '日薪', '時薪', '月費率']
         for col in salary_cols:
             if col in df.columns:
@@ -65,13 +65,13 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 (v9.2 台灣薪資版)")
-st.markdown("本系統已將美金薪資 **自動 x30** 換算為新台幣 (TWD)，並加上 NT$ 標示。")
+st.title("🎰 IBM HR 戰情室 (v9.5 多重分析版)")
+st.markdown("本系統已將分析選單改為 **多選模式 (Multiselect)**，您可以同時勾選多個因子進行比較。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
     df = load_and_process_data(uploaded_file)
-    st.sidebar.success("✅ 資料載入成功 (已轉台幣)")
+    st.sidebar.success("✅ 資料載入成功")
 else:
     st.info("請先上傳資料檔案 (WA_Fn-UseC_-HR-Employee-Attrition.csv)")
     st.stop()
@@ -79,61 +79,70 @@ else:
 tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
 
 # ==========================================
-# 分頁 1: 數據分析 (EDA)
+# 分頁 1: 數據分析 (EDA) - 多選模式
 # ==========================================
 with tab1:
     st.header("1. 離職原因探索 (EDA)")
     
-    # 欄位分類
     numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
     ordinal_cols = ['工作滿意度', '環境滿意度', '人際關係滿意度', '工作投入度', '績效評級', '職級']
     categorical_cols = ['加班', '商務差旅', '部門', '性別', '婚姻狀況', '教育領域', '職位'] + ordinal_cols
     
-    # 防呆
     valid_options = [c for c in (numeric_cols + categorical_cols) if c in df.columns]
     if '離職_數值' in valid_options: valid_options.remove('離職_數值')
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("變數關聯分析")
-        default_opt = '月收入' if '月收入' in df.columns else valid_options[0]
-        target_factor = st.selectbox("請選擇分析因子：", valid_options, index=valid_options.index(default_opt) if default_opt in valid_options else 0)
+        st.subheader("變數關聯分析 (可多選)")
         
-        is_categorical = (target_factor in categorical_cols) or \
-                         (df[target_factor].dtype == 'object') or \
-                         (df[target_factor].nunique() <= 5)
+        # ★★★ 這裡改成 multiselect (多選) ★★★
+        # 預設幫老師選好兩個最經典的，讓畫面不留白
+        default_opts = [c for c in ['加班', '月收入'] if c in df.columns]
         
-        if is_categorical:
-            # 長條圖
-            group_data = df.groupby(target_factor)['離職_數值'].agg(['mean', 'count']).reset_index()
-            group_data.columns = [target_factor, '離職率', '人數']
-            group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
+        selected_factors = st.multiselect(
+            "請勾選你們想分析的因子 (可複選)：", 
+            valid_options, 
+            default=default_opts
+        )
+        
+        # ★★★ 使用迴圈，把勾選的每一個都畫出來 ★★★
+        for target_factor in selected_factors:
+            st.markdown(f"#### 📌 分析項目：{target_factor}")
             
-            fig = px.bar(group_data, x=target_factor, y='離職率%', 
-                         title=f"【{target_factor}】各組別離職率",
-                         text='離職率%', color='離職率%', color_continuous_scale='Reds')
-            fig.update_traces(texttemplate='%{text}%', textposition='outside')
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            # 盒鬚圖
-            fig = px.box(df, x="離職", y=target_factor, color="離職", 
-                         title=f"離職者 vs 在職者的【{target_factor}】差異",
-                         color_discrete_map={'是':'#FF4B4B', '否':'#1F77B4'})
-            st.plotly_chart(fig, use_container_width=True)
+            is_categorical = (target_factor in categorical_cols) or \
+                             (df[target_factor].dtype == 'object') or \
+                             (df[target_factor].nunique() <= 5)
             
-            # 數字顯示 (若是金額，加上 NT$)
-            avg_yes = df[df['離職']=='是'][target_factor].mean()
-            avg_no = df[df['離職']=='否'][target_factor].mean()
-            diff_pct = ((avg_yes - avg_no) / avg_no) * 100
+            if is_categorical:
+                # === 橫條圖 ===
+                group_data = df.groupby(target_factor)['離職_數值'].agg(['mean', 'sum']).reset_index()
+                group_data.columns = [target_factor, '離職率', '離職人數']
+                group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
+                group_data['顯示標籤'] = group_data.apply(lambda x: f"{x['離職率%']}% ({int(x['離職人數'])}人)", axis=1)
+                
+                fig = px.bar(group_data, y=target_factor, x='離職率%', 
+                             text='顯示標籤', orientation='h',
+                             color='離職率%', color_continuous_scale='Reds')
+                fig.update_traces(textposition='auto')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # === 盒鬚圖 ===
+                fig = px.box(df, x="離職", y=target_factor, color="離職", 
+                             color_discrete_map={'是':'#FF4B4B', '否':'#1F77B4'})
+                st.plotly_chart(fig, use_container_width=True)
+                
+                avg_yes = df[df['離職']=='是'][target_factor].mean()
+                avg_no = df[df['離職']=='否'][target_factor].mean()
+                diff_pct = ((avg_yes - avg_no) / avg_no) * 100
+                prefix = "💰 NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("離職平均", f"{prefix}{avg_yes:,.0f}")
+                m2.metric("在職平均", f"{prefix}{avg_no:,.0f}")
+                m3.metric("差異", f"{diff_pct:+.1f}%", delta_color="inverse")
             
-            # 這裡也加上 NT$ 的判斷
-            prefix = "💰 NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("離職者平均", f"{prefix}{avg_yes:,.0f}")
-            m2.metric("在職者平均", f"{prefix}{avg_no:,.0f}")
-            m3.metric("差異", f"{diff_pct:+.1f}%", delta_color="inverse")
+            st.divider() # 畫完一張圖，加一條分隔線
 
     with col2:
         st.subheader("相關性熱圖")
@@ -146,7 +155,7 @@ with tab1:
             st.plotly_chart(fig_corr, use_container_width=True)
 
 # ==========================================
-# 分頁 2: 綜藝大賭桌 (強制顯示 NT$)
+# 分頁 2: 綜藝大賭桌 (維持不變)
 # ==========================================
 with tab2:
     st.header("🎡 HR 留才大賭桌")
@@ -174,23 +183,19 @@ with tab2:
     if st.session_state['round_data'] is not None:
         round_df = st.session_state['round_data']
         
-        # --- A. 員工牌面 (強制加上 NT$) ---
         st.divider()
         st.subheader("🧐 員工機密檔案")
         cols = st.columns(5)
         for i, row in round_df.iterrows():
             with cols[i]:
                 st.info(f"員工 #{i+1}")
-                # ★★★ 這裡改成 NT$ ★★★
                 st.write(f"**月薪**: 💰 NT$ {row.get('月收入', 0):,.0f}")
-                
                 ot = row.get('加班', '無')
                 if ot == '有': st.error(f"加班: {ot}")
                 else: st.success(f"加班: {ot}")
                 st.write(f"**滿意度**: {row.get('工作滿意度', 0)}")
                 st.write(f"**年資**: {row.get('年資', 0)} 年")
 
-        # --- B. 下注大賭桌 ---
         st.divider()
         st.subheader("📝 各組決策看板")
         
@@ -215,7 +220,6 @@ with tab2:
 
         st.divider()
 
-        # --- C. 幸運輪盤與結算 ---
         col_spin, col_submit = st.columns([1, 2])
         
         with col_spin:
@@ -266,7 +270,6 @@ with tab2:
                     luck_icon = "🍀" if team == st.session_state['lucky_team'] else ""
                     st.write(f"**{team}** {luck_icon}: 本局得 **{round_score}** 分")
 
-        # --- D. 總排行榜 ---
         st.header("🏆 總積分排行榜")
         lb_df = pd.DataFrame(list(st.session_state['scores'].items()), columns=['組別', '分數'])
         lb_df = lb_df.sort_values(by='分數', ascending=False)
