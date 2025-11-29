@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (v9.7)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v9.8)", layout="wide")
 
 # ==========================================
 # 0. 核心數據處理 (含台幣轉換 + 語意優化)
@@ -34,7 +34,7 @@ def load_and_process_data(file):
             'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
         }
 
-        # 2. 內容翻譯 (★修正重點：改成 已離職/留任★)
+        # 2. 內容翻譯
         values_map = {
             'Attrition': {'Yes': '已離職', 'No': '留任'},
             'OverTime': {'Yes': '有', 'No': '無'},
@@ -48,7 +48,7 @@ def load_and_process_data(file):
 
         df.rename(columns=columns_map, inplace=True)
         
-        # 3. 數值化處理 (配合新名稱更新邏輯)
+        # 3. 數值化處理
         if '離職' in df.columns:
             df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '已離職' else 0)
 
@@ -65,8 +65,8 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 (v9.7 語意明確版)")
-st.markdown("本系統已更新標籤：將原本的 是/否 改為更明確的 **已離職 / 留任**。")
+st.title("🎰 IBM HR 戰情室 (v9.8 統一垂直版)")
+st.markdown("本系統已將所有圖表統一為 **直向顯示 (Vertical)**，視覺更整齊。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
@@ -79,7 +79,7 @@ else:
 tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
 
 # ==========================================
-# 分頁 1: 數據分析 (EDA)
+# 分頁 1: 數據分析 (EDA) - 統一垂直圖表
 # ==========================================
 with tab1:
     st.header("1. 離職原因探索 (EDA)")
@@ -112,35 +112,35 @@ with tab1:
                              (df[target_factor].nunique() <= 5)
             
             if is_categorical:
-                # === 橫條圖 ===
+                # === 長條圖 (垂直版 Vertical) ===
                 group_data = df.groupby(target_factor)['離職_數值'].agg(['mean', 'sum']).reset_index()
                 group_data.columns = [target_factor, '離職率', '離職人數']
                 group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
-                group_data['顯示標籤'] = group_data.apply(lambda x: f"{x['離職率%']}% ({int(x['離職人數'])}人)", axis=1)
+                group_data['顯示標籤'] = group_data.apply(lambda x: f"{x['離職率%']}%<br>({int(x['離職人數'])}人)", axis=1)
                 
-                max_val = group_data['離職率%'].max()
-                
-                fig = px.bar(group_data, y=target_factor, x='離職率%', 
-                             text='顯示標籤', orientation='h',
+                # ★★★ 這裡 X 和 Y 換回來，變回直向 ★★★
+                fig = px.bar(group_data, x=target_factor, y='離職率%', 
+                             text='顯示標籤', 
+                             # orientation='v', # 預設就是垂直，不用特別寫
                              color='離職率%', color_continuous_scale='Reds')
                 
                 fig.update_traces(textposition='outside', textfont_size=14) 
-                fig.update_layout(xaxis=dict(range=[0, max_val * 1.35])) 
+                # 增加 Y 軸高度，讓上面的字不會被切掉
+                max_val = group_data['離職率%'].max()
+                fig.update_layout(yaxis=dict(range=[0, max_val * 1.3]))
                 
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                # === 盒鬚圖 (配色修正為 已離職/留任) ===
-                # 注意：這裡的 color_discrete_map 關鍵字改了
+                # === 盒鬚圖 (垂直版) ===
                 fig = px.box(df, x="離職", y=target_factor, color="離職", 
                              title=f"【{target_factor}】分佈差異：已離職 vs 留任",
                              color_discrete_map={'已離職':'#FF4B4B', '留任':'#1F77B4'})
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 數字顯示 (邏輯修正)
+                # 數字顯示
                 avg_yes = df[df['離職']=='已離職'][target_factor].mean()
                 avg_no = df[df['離職']=='留任'][target_factor].mean()
                 
-                # 防呆：如果剛好沒數據
                 if pd.isna(avg_yes): avg_yes = 0
                 if pd.isna(avg_no): avg_no = 0
                 
@@ -165,7 +165,7 @@ with tab1:
             st.plotly_chart(fig_corr, use_container_width=True)
 
 # ==========================================
-# 分頁 2: 綜藝大賭桌 (維持不變，邏輯微調)
+# 分頁 2: 綜藝大賭桌 (維持不變)
 # ==========================================
 with tab2:
     st.header("🎡 HR 留才大賭桌")
@@ -256,7 +256,6 @@ with tab2:
                 ans_cols = st.columns(5)
                 answers = []
                 for i, row in round_df.iterrows():
-                    # ★修正邏輯：因為現在資料是 '已離職'，不是 '是'
                     is_leaving = (row['離職'] == '已離職')
                     answers.append(is_leaving)
                     with ans_cols[i]:
