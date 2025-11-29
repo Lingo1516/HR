@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (台灣薪資版)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v9.2)", layout="wide")
 
 # ==========================================
 # 0. 核心數據處理 (自動轉台幣 TWD)
@@ -53,7 +53,6 @@ def load_and_process_data(file):
             df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '是' else 0)
 
         # 4. ★★★ 自動薪資轉換 (USD -> TWD, x30) ★★★
-        # 讓學生更有感
         salary_cols = ['月收入', '日薪', '時薪', '月費率']
         for col in salary_cols:
             if col in df.columns:
@@ -66,8 +65,8 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 & 綜藝競賽系統 (TWD版)")
-st.markdown("本系統已將美金薪資 **自動 x30** 換算為新台幣 (TWD)，以符合台灣外商薪資水準。")
+st.title("🎰 IBM HR 戰情室 (v9.2 台灣薪資版)")
+st.markdown("本系統已將美金薪資 **自動 x30** 換算為新台幣 (TWD)，並加上 NT$ 標示。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
@@ -128,7 +127,8 @@ with tab1:
             avg_no = df[df['離職']=='否'][target_factor].mean()
             diff_pct = ((avg_yes - avg_no) / avg_no) * 100
             
-            prefix = "NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
+            # 這裡也加上 NT$ 的判斷
+            prefix = "💰 NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
             
             m1, m2, m3 = st.columns(3)
             m1.metric("離職者平均", f"{prefix}{avg_yes:,.0f}")
@@ -146,10 +146,10 @@ with tab1:
             st.plotly_chart(fig_corr, use_container_width=True)
 
 # ==========================================
-# 分頁 2: 綜藝大賭桌 (含金額顯示優化)
+# 分頁 2: 綜藝大賭桌 (強制顯示 NT$)
 # ==========================================
 with tab2:
-    st.header("🎡 HR 留才大賭桌 (Group Battle)")
+    st.header("🎡 HR 留才大賭桌")
     st.markdown("### 規則：\n1. 系統發出 5 張員工牌。\n2. 六個小組同時下注，勾選要挽留的人。\n3. 轉動幸運輪盤，被選中的組別 **本局分數加倍**！")
 
     if 'scores' not in st.session_state:
@@ -174,15 +174,16 @@ with tab2:
     if st.session_state['round_data'] is not None:
         round_df = st.session_state['round_data']
         
-        # --- A. 員工牌面 (金額已轉台幣) ---
+        # --- A. 員工牌面 (強制加上 NT$) ---
         st.divider()
         st.subheader("🧐 員工機密檔案")
         cols = st.columns(5)
         for i, row in round_df.iterrows():
             with cols[i]:
                 st.info(f"員工 #{i+1}")
-                # 這裡顯示轉換後的台幣
-                st.write(f"**月薪**: NT$ {row.get('月收入', 0):,.0f}")
+                # ★★★ 這裡改成 NT$ ★★★
+                st.write(f"**月薪**: 💰 NT$ {row.get('月收入', 0):,.0f}")
+                
                 ot = row.get('加班', '無')
                 if ot == '有': st.error(f"加班: {ot}")
                 else: st.success(f"加班: {ot}")
