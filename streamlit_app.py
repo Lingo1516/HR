@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
 import plotly.express as px
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (v9.9)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v10.0)", layout="wide")
 
 # ==========================================
 # 0. 核心數據處理
@@ -34,7 +33,7 @@ def load_and_process_data(file):
             'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
         }
 
-        # 2. 內容翻譯
+        # 2. 內容翻譯 (統一標籤)
         values_map = {
             'Attrition': {'Yes': '已離職', 'No': '留任'},
             'OverTime': {'Yes': '有', 'No': '無'},
@@ -65,8 +64,8 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 (v9.9 數據透視版)")
-st.markdown("本系統已新增 **數據明細表**，並在圖表上顯示 **完整人數資訊 (離職/總數)**。")
+st.title("🎰 IBM HR 戰情室 (v10.0 完整結論版)")
+st.markdown("本系統已針對每個分析項目提供 **數據明細表** 與 **自動化結論判定**。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
@@ -79,7 +78,7 @@ else:
 tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
 
 # ==========================================
-# 分頁 1: 數據分析 (EDA)
+# 分頁 1: 數據分析 (EDA) - 包含表格與結論
 # ==========================================
 with tab1:
     st.header("1. 離職原因探索 (EDA)")
@@ -99,7 +98,7 @@ with tab1:
         default_opts = [c for c in ['加班', '月收入'] if c in df.columns]
         
         selected_factors = st.multiselect(
-            "請勾選你們想分析的因子 (可複選)：", 
+            "請勾選你們想分析的因子：", 
             valid_options, 
             default=default_opts
         )
@@ -107,60 +106,94 @@ with tab1:
         for target_factor in selected_factors:
             st.markdown(f"#### 📌 分析項目：{target_factor}")
             
+            # 判斷是否為金額欄位 (用於顯示 NT$)
+            is_money = target_factor in ['月收入', '日薪', '時薪']
+            money_prefix = "NT$ " if is_money else ""
+            
             is_categorical = (target_factor in categorical_cols) or \
                              (df[target_factor].dtype == 'object') or \
                              (df[target_factor].nunique() <= 5)
             
             if is_categorical:
-                # === 長條圖 (詳細數據版) ===
-                # 計算：離職率(mean), 離職人數(sum), 總人數(count)
+                # === A. 類別型分析 (加班、滿意度...) ===
+                
+                # 1. 畫圖 (橫條圖)
                 group_data = df.groupby(target_factor)['離職_數值'].agg(['mean', 'sum', 'count']).reset_index()
                 group_data.columns = [target_factor, '離職率', '離職人數', '總人數']
                 group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
-                
-                # ★★★ 標籤升級：顯示 30.5% (127/416人) ★★★
                 group_data['顯示標籤'] = group_data.apply(
                     lambda x: f"{x['離職率%']}%<br>({int(x['離職人數'])}/{int(x['總人數'])}人)", axis=1
                 )
                 
-                fig = px.bar(group_data, x=target_factor, y='離職率%', 
-                             text='顯示標籤', 
-                             color='離職率%', color_continuous_scale='Reds')
-                
-                # 設定文字為黑色，比較清楚
-                fig.update_traces(textposition='outside', textfont_color='black', textfont_size=14) 
-                
-                # 自動調整 Y 軸高度，留空間給文字
                 max_val = group_data['離職率%'].max()
-                fig.update_layout(yaxis=dict(range=[0, max_val * 1.35]))
-                
+                fig = px.bar(group_data, y=target_factor, x='離職率%', 
+                             text='顯示標籤', orientation='h',
+                             color='離職率%', color_continuous_scale='Reds')
+                fig.update_traces(textposition='outside', textfont_color='black', textfont_size=14)
+                fig.update_layout(xaxis=dict(range=[0, max_val * 1.4]))
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # ★★★ 新增：數據明細表 (Data Table) ★★★
-                with st.expander(f"查看 【{target_factor}】 的詳細數據表", expanded=True):
-                    display_table = group_data[[target_factor, '總人數', '離職人數', '離職率%']].copy()
+                # 2. 顯示表格
+                with st.expander(f"📋 查看【{target_factor}】詳細數據表", expanded=True):
+                    display_table = group_data[[target_factor, '總人數', '離職人數', '離職率%']].sort_values(by='離職率%', ascending=False)
                     st.dataframe(display_table, hide_index=True, use_container_width=True)
+                
+                # 3. 自動下結論
+                max_row = group_data.loc[group_data['離職率%'].idxmax()]
+                min_row = group_data.loc[group_data['離職率%'].idxmin()]
+                gap = max_row['離職率%'] - min_row['離職率%']
+                
+                if gap > 10:
+                    st.error(f"🔍 **分析結論：有顯著相關！**\n\n 「{max_row[target_factor]}」 的離職率高達 **{max_row['離職率%']}%**，遠高於 「{min_row[target_factor]}」 ({min_row['離職率%']}%)。建議針對此高風險群體進行深入調查。")
+                elif gap > 5:
+                    st.warning(f"🔍 **分析結論：有輕微相關。**\n\n 不同組別間有些許差異，最高離職率為 {max_row['離職率%']}%。")
+                else:
+                    st.info(f"🔍 **分析結論：無顯著相關。**\n\n 各組別離職率差異不大，此因素可能不是主要原因。")
 
             else:
-                # === 盒鬚圖 ===
+                # === B. 數值型分析 (薪資、年齡...) ===
+                
+                # 1. 畫圖 (盒鬚圖 - 直向)
                 fig = px.box(df, x="離職", y=target_factor, color="離職", 
-                             title=f"【{target_factor}】分佈差異：已離職 vs 留任",
+                             title=f"【{target_factor}】分佈：已離職 vs 留任",
                              color_discrete_map={'已離職':'#FF4B4B', '留任':'#1F77B4'})
                 st.plotly_chart(fig, use_container_width=True)
                 
-                avg_yes = df[df['離職']=='已離職'][target_factor].mean()
-                avg_no = df[df['離職']=='留任'][target_factor].mean()
+                # 2. 計算統計量
+                stat_df = df.groupby('離職')[target_factor].agg(['mean', 'median', 'count']).reset_index()
+                stat_df.columns = ['狀態', '平均值', '中位數', '人數']
                 
-                if pd.isna(avg_yes): avg_yes = 0
-                if pd.isna(avg_no): avg_no = 0
+                # 抓出數值
+                try:
+                    val_yes = stat_df[stat_df['狀態']=='已離職']['平均值'].values[0]
+                    val_no = stat_df[stat_df['狀態']=='留任']['平均值'].values[0]
+                except:
+                    val_yes = 0
+                    val_no = 0
                 
-                diff_pct = ((avg_yes - avg_no) / avg_no) * 100 if avg_no != 0 else 0
-                prefix = "💰 NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
+                # 3. 顯示表格 (美化數字格式)
+                with st.expander(f"📋 查看【{target_factor}】詳細數據表", expanded=True):
+                    # 複製一份來做格式化，不影響計算
+                    show_df = stat_df.copy()
+                    if is_money:
+                        show_df['平均值'] = show_df['平均值'].apply(lambda x: f"NT$ {x:,.0f}")
+                        show_df['中位數'] = show_df['中位數'].apply(lambda x: f"NT$ {x:,.0f}")
+                    else:
+                        show_df['平均值'] = show_df['平均值'].apply(lambda x: f"{x:.1f}")
+                        show_df['中位數'] = show_df['中位數'].apply(lambda x: f"{x:.1f}")
+                    
+                    st.dataframe(show_df, hide_index=True, use_container_width=True)
+
+                # 4. 自動下結論
+                if val_no == 0: val_no = 1 # 避免除以0
+                diff_pct = ((val_yes - val_no) / val_no) * 100
                 
-                m1, m2, m3 = st.columns(3)
-                m1.metric("已離職者平均", f"{prefix}{avg_yes:,.0f}")
-                m2.metric("留任者平均", f"{prefix}{avg_no:,.0f}")
-                m3.metric("差異", f"{diff_pct:+.1f}%", delta_color="inverse")
+                if diff_pct < -10:
+                    st.error(f"🔍 **分析結論：有顯著負相關！(離職者較低)**\n\n 已離職者的平均 {target_factor} 為 **{money_prefix}{val_yes:,.0f}**，比留任者低了 **{abs(diff_pct):.1f}%**。這代表「數值越低，越容易離職」。")
+                elif diff_pct > 10:
+                    st.error(f"🔍 **分析結論：有顯著正相關！(離職者較高)**\n\n 已離職者的平均 {target_factor} 為 **{money_prefix}{val_yes:,.0f}**，比留任者高了 **{diff_pct:.1f}%**。這代表「數值越高，越容易離職」。")
+                else:
+                    st.info(f"🔍 **分析結論：無顯著差異。**\n\n 兩者差距僅 {abs(diff_pct):.1f}%，統計上差異不大。")
             
             st.divider()
 
