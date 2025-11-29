@@ -7,10 +7,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (v9.5)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v9.7)", layout="wide")
 
 # ==========================================
-# 0. 核心數據處理 (含台幣轉換)
+# 0. 核心數據處理 (含台幣轉換 + 語意優化)
 # ==========================================
 @st.cache_data
 def load_and_process_data(file):
@@ -34,9 +34,9 @@ def load_and_process_data(file):
             'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
         }
 
-        # 2. 內容翻譯
+        # 2. 內容翻譯 (★修正重點：改成 已離職/留任★)
         values_map = {
-            'Attrition': {'Yes': '是', 'No': '否'},
+            'Attrition': {'Yes': '已離職', 'No': '留任'},
             'OverTime': {'Yes': '有', 'No': '無'},
             'Gender': {'Female': '女性', 'Male': '男性'},
             'MaritalStatus': {'Single': '單身', 'Married': '已婚', 'Divorced': '離婚'}
@@ -48,9 +48,9 @@ def load_and_process_data(file):
 
         df.rename(columns=columns_map, inplace=True)
         
-        # 3. 數值化處理
+        # 3. 數值化處理 (配合新名稱更新邏輯)
         if '離職' in df.columns:
-            df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '是' else 0)
+            df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '已離職' else 0)
 
         # 4. 自動薪資轉換 (USD -> TWD, x30)
         salary_cols = ['月收入', '日薪', '時薪', '月費率']
@@ -65,8 +65,8 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 (v9.5 多重分析版)")
-st.markdown("本系統已將分析選單改為 **多選模式 (Multiselect)**，您可以同時勾選多個因子進行比較。")
+st.title("🎰 IBM HR 戰情室 (v9.7 語意明確版)")
+st.markdown("本系統已更新標籤：將原本的 是/否 改為更明確的 **已離職 / 留任**。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
@@ -79,7 +79,7 @@ else:
 tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
 
 # ==========================================
-# 分頁 1: 數據分析 (EDA) - 多選模式
+# 分頁 1: 數據分析 (EDA)
 # ==========================================
 with tab1:
     st.header("1. 離職原因探索 (EDA)")
@@ -96,8 +96,6 @@ with tab1:
     with col1:
         st.subheader("變數關聯分析 (可多選)")
         
-        # ★★★ 這裡改成 multiselect (多選) ★★★
-        # 預設幫老師選好兩個最經典的，讓畫面不留白
         default_opts = [c for c in ['加班', '月收入'] if c in df.columns]
         
         selected_factors = st.multiselect(
@@ -106,7 +104,6 @@ with tab1:
             default=default_opts
         )
         
-        # ★★★ 使用迴圈，把勾選的每一個都畫出來 ★★★
         for target_factor in selected_factors:
             st.markdown(f"#### 📌 分析項目：{target_factor}")
             
@@ -121,28 +118,41 @@ with tab1:
                 group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
                 group_data['顯示標籤'] = group_data.apply(lambda x: f"{x['離職率%']}% ({int(x['離職人數'])}人)", axis=1)
                 
+                max_val = group_data['離職率%'].max()
+                
                 fig = px.bar(group_data, y=target_factor, x='離職率%', 
                              text='顯示標籤', orientation='h',
                              color='離職率%', color_continuous_scale='Reds')
-                fig.update_traces(textposition='auto')
+                
+                fig.update_traces(textposition='outside', textfont_size=14) 
+                fig.update_layout(xaxis=dict(range=[0, max_val * 1.35])) 
+                
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                # === 盒鬚圖 ===
+                # === 盒鬚圖 (配色修正為 已離職/留任) ===
+                # 注意：這裡的 color_discrete_map 關鍵字改了
                 fig = px.box(df, x="離職", y=target_factor, color="離職", 
-                             color_discrete_map={'是':'#FF4B4B', '否':'#1F77B4'})
+                             title=f"【{target_factor}】分佈差異：已離職 vs 留任",
+                             color_discrete_map={'已離職':'#FF4B4B', '留任':'#1F77B4'})
                 st.plotly_chart(fig, use_container_width=True)
                 
-                avg_yes = df[df['離職']=='是'][target_factor].mean()
-                avg_no = df[df['離職']=='否'][target_factor].mean()
-                diff_pct = ((avg_yes - avg_no) / avg_no) * 100
+                # 數字顯示 (邏輯修正)
+                avg_yes = df[df['離職']=='已離職'][target_factor].mean()
+                avg_no = df[df['離職']=='留任'][target_factor].mean()
+                
+                # 防呆：如果剛好沒數據
+                if pd.isna(avg_yes): avg_yes = 0
+                if pd.isna(avg_no): avg_no = 0
+                
+                diff_pct = ((avg_yes - avg_no) / avg_no) * 100 if avg_no != 0 else 0
                 prefix = "💰 NT$ " if target_factor in ['月收入', '日薪', '時薪'] else ""
                 
                 m1, m2, m3 = st.columns(3)
-                m1.metric("離職平均", f"{prefix}{avg_yes:,.0f}")
-                m2.metric("在職平均", f"{prefix}{avg_no:,.0f}")
+                m1.metric("已離職者平均", f"{prefix}{avg_yes:,.0f}")
+                m2.metric("留任者平均", f"{prefix}{avg_no:,.0f}")
                 m3.metric("差異", f"{diff_pct:+.1f}%", delta_color="inverse")
             
-            st.divider() # 畫完一張圖，加一條分隔線
+            st.divider()
 
     with col2:
         st.subheader("相關性熱圖")
@@ -155,7 +165,7 @@ with tab1:
             st.plotly_chart(fig_corr, use_container_width=True)
 
 # ==========================================
-# 分頁 2: 綜藝大賭桌 (維持不變)
+# 分頁 2: 綜藝大賭桌 (維持不變，邏輯微調)
 # ==========================================
 with tab2:
     st.header("🎡 HR 留才大賭桌")
@@ -246,7 +256,8 @@ with tab2:
                 ans_cols = st.columns(5)
                 answers = []
                 for i, row in round_df.iterrows():
-                    is_leaving = (row['離職'] == '是')
+                    # ★修正邏輯：因為現在資料是 '已離職'，不是 '是'
+                    is_leaving = (row['離職'] == '已離職')
                     answers.append(is_leaving)
                     with ans_cols[i]:
                         if is_leaving: st.error(f"#{i+1} 想離職")
