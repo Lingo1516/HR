@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 (v10.4)", layout="wide")
+st.set_page_config(page_title="IBM HR 戰情室 (v10.5)", layout="wide")
 
 # ==========================================
 # 0. 核心數據處理
@@ -33,7 +33,7 @@ def load_and_process_data(file):
             'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
         }
 
-        # 2. 內容翻譯 (已離職/留任)
+        # 2. 內容翻譯
         values_map = {
             'Attrition': {'Yes': '已離職', 'No': '留任'},
             'OverTime': {'Yes': '有', 'No': '無'},
@@ -47,9 +47,13 @@ def load_and_process_data(file):
 
         df.rename(columns=columns_map, inplace=True)
         
-        # 3. 數值化處理
+        # 3. 數值化處理 (給熱圖與AI用)
         if '離職' in df.columns:
             df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '已離職' else 0)
+            
+        # ★★★ 新增：把加班也轉成數值，讓它能進熱圖 ★★★
+        if '加班' in df.columns:
+            df['加班_數值'] = df['加班'].apply(lambda x: 1 if x == '有' else 0)
 
         # 4. 自動薪資轉換 (USD -> TWD, x30)
         salary_cols = ['月收入', '日薪', '時薪', '月費率']
@@ -71,8 +75,8 @@ def load_and_process_data(file):
 # ==========================================
 # 1. 系統初始化
 # ==========================================
-st.title("🎰 IBM HR 戰情室 (v10.4 最終修正版)")
-st.markdown("本系統已整合：**直向圖表**、**紅綠燈熱圖**、**詳細數據表** 與 **自動結論**。")
+st.title("🎰 IBM HR 戰情室 (v10.5 全面掃描版)")
+st.markdown("本系統熱圖已擴充至 **18 個關鍵指標**，包含加班、股票、升遷年資等，提供地毯式分析。")
 
 uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
@@ -95,8 +99,8 @@ with tab1:
     categorical_cols = ['加班', '商務差旅', '部門', '性別', '婚姻狀況', '教育領域', '職位'] + ordinal_cols
     
     valid_options = [c for c in (numeric_cols + categorical_cols) if c in df.columns]
-    if '離職_數值' in valid_options: valid_options.remove('離職_數值')
-    valid_options = [c for c in valid_options if '_標籤' not in c]
+    # 過濾掉輔助欄位
+    valid_options = [c for c in valid_options if '_標籤' not in c and '_數值' not in c]
     
     col1, col2 = st.columns([2, 1])
     
@@ -121,7 +125,7 @@ with tab1:
                              (df[target_factor].nunique() <= 5)
             
             if is_categorical:
-                # === A. 類別型分析 (直向長條圖) ===
+                # === 長條圖 ===
                 group_data = df.groupby(plot_factor)['離職_數值'].agg(['mean', 'sum', 'count']).reset_index()
                 group_data.columns = [plot_factor, '離職率', '離職人數', '總人數']
                 group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
@@ -131,28 +135,24 @@ with tab1:
                 )
                 
                 max_val = group_data['離職率%'].max()
-                
-                # 直向圖表 (x=類別, y=離職率)
                 fig = px.bar(group_data, x=plot_factor, y='離職率%', 
                              text='顯示標籤',
                              title=f"【{target_factor}】離職率分析",
                              color='離職率%', color_continuous_scale='Reds')
                 
                 fig.update_traces(textposition='outside', textfont_size=14)
-                fig.update_layout(yaxis=dict(range=[0, max_val * 1.35])) # 預留上方空間
-                
+                fig.update_layout(yaxis=dict(range=[0, max_val * 1.35])) 
                 st.plotly_chart(fig, use_container_width=True)
                 
                 with st.expander(f"📋 查看數據表", expanded=True):
                     st.dataframe(group_data[[plot_factor, '總人數', '離職人數', '離職率%']], hide_index=True, use_container_width=True)
                 
-                # 自動結論
                 try:
                     max_row = group_data.loc[group_data['離職率%'].idxmax()]
                     min_row = group_data.loc[group_data['離職率%'].idxmin()]
                     gap = max_row['離職率%'] - min_row['離職率%']
                     if gap > 10:
-                        st.error(f"🔍 **結論：有顯著相關！**\n\n 「{max_row[plot_factor]}」 的離職率 ({max_row['離職率%']}%) 遠高於 「{min_row[plot_factor]}」 ({min_row['離職率%']}%)。")
+                        st.error(f"🔍 **結論：有顯著相關！** (差距 {gap:.1f}%)")
                     elif gap > 5:
                         st.warning(f"🔍 **結論：有輕微相關。**")
                     else:
@@ -160,7 +160,7 @@ with tab1:
                 except: pass
 
             else:
-                # === B. 數值型分析 (直向盒鬚圖) ===
+                # === 盒鬚圖 ===
                 fig = px.box(df, x="離職", y=target_factor, color="離職", 
                              title=f"【{target_factor}】分佈比較",
                              color_discrete_map={'已離職':'#FF4B4B', '留任':'#1F77B4'})
@@ -184,9 +184,9 @@ with tab1:
                     diff_pct = ((val_yes - val_no) / val_no) * 100 if val_no != 0 else 0
                     
                     if diff_pct < -10:
-                        st.error(f"🔍 **結論：有顯著負相關！(離職者較低)**\n\n 已離職者平均 {money_prefix}{val_yes:,.0f}，比留任者低了 {abs(diff_pct):.1f}%。")
+                        st.error(f"🔍 **結論：有顯著負相關！** (離職者低了 {abs(diff_pct):.1f}%)")
                     elif diff_pct > 10:
-                        st.error(f"🔍 **結論：有顯著正相關！(離職者較高)**\n\n 已離職者平均 {money_prefix}{val_yes:,.0f}，比留任者高了 {diff_pct:.1f}%。")
+                        st.error(f"🔍 **結論：有顯著正相關！** (離職者高了 {diff_pct:.1f}%)")
                     else:
                         st.info(f"🔍 **結論：無顯著差異 ({diff_pct:.1f}%)。**")
                 except: pass
@@ -195,22 +195,32 @@ with tab1:
 
     with col2:
         st.subheader("相關性熱圖 (紅=危險 / 綠=安全)")
-        corr_cols = ['離職_數值', '月收入', '年齡', '年資', '通勤距離', '工作滿意度', '環境滿意度']
-        real_corr_cols = [c for c in corr_cols if c in df.columns]
+        
+        # ★★★ 大幅擴充熱圖變數 ★★★
+        extended_corr_cols = [
+            '離職_數值', '加班_數值', '月收入', '年齡', '年資', '公司年資', 
+            '職級', '股票期權級別', '工作投入度', '工作滿意度', 
+            '環境滿意度', '工作生活平衡', '通勤距離', '曾工作公司數量',
+            '去年培訓次數', '距離上次晉升年資', '與目前經理共事年資'
+        ]
+        
+        # 過濾出真正存在的欄位
+        real_corr_cols = [c for c in extended_corr_cols if c in df.columns]
         
         if len(real_corr_cols) > 1:
             corr_matrix = df[real_corr_cols].corr()[['離職_數值']].sort_values(by='離職_數值', ascending=False)
             
-            # ★★★ 關鍵修正：確保熱圖是紅綠燈配色 (RdYlGn_r) ★★★
+            # 使用 RdYlGn_r (紅=正相關/危險, 綠=負相關/安全)
             fig_corr = px.imshow(corr_matrix, 
                                  text_auto=True, 
                                  color_continuous_scale='RdYlGn_r', 
                                  aspect="auto",
-                                 title="相關性分析")
+                                 height=800, # ★★★ 拉長畫布，讓18個項目不擁擠
+                                 title="全方位風險因子掃描")
             st.plotly_chart(fig_corr, use_container_width=True)
             
-            st.caption("🔴 紅色(正數)：數值越高越容易離職 (如通勤距離)")
-            st.caption("🟢 綠色(負數)：數值越高越容易留任 (如月收入)")
+            st.caption("🔴 紅色：數值越高，離職率越高 (危險推手)")
+            st.caption("🟢 綠色：數值越高，離職率越低 (留任拉力)")
 
 # ==========================================
 # 分頁 2: 綜藝大賭桌 (維持不變)
