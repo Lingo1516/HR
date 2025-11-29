@@ -1,273 +1,225 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import time
 import plotly.express as px
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, recall_score
 
-st.set_page_config(page_title="IBM HR 戰情室 & 競賽系統", layout="wide")
+st.set_page_config(page_title="IBM HR 綜藝競賽系統", layout="wide")
 
 # ==========================================
-# 0. 核心數據處理函式 (穩健版)
+# 0. 核心資料處理
 # ==========================================
 @st.cache_data
 def load_and_process_data(file):
     try:
         df = pd.read_csv(file)
-        
-        # 1. 欄位名稱對照表 (English -> Chinese)
         columns_map = {
-            'Age': '年齡', 'Attrition': '離職', 'BusinessTravel': '商務差旅', 'DailyRate': '日薪',
-            'Department': '部門', 'DistanceFromHome': '通勤距離', 'Education': '教育程度',
-            'EducationField': '教育領域', 'EmployeeCount': '員工數量', 'EmployeeNumber': '員工編號',
-            'EnvironmentSatisfaction': '環境滿意度', 'Gender': '性別', 'HourlyRate': '時薪',
-            'JobInvolvement': '工作投入度', 'JobLevel': '職級', 'JobRole': '職位',
-            'JobSatisfaction': '工作滿意度', 'MaritalStatus': '婚姻狀況', 'MonthlyIncome': '月收入',
-            'MonthlyRate': '月費率', 'NumCompaniesWorked': '曾工作公司數量', 'Over18': '年滿18歲',
-            'OverTime': '加班', 'PercentSalaryHike': '加薪百分比', 'PerformanceRating': '績效評級',
-            'RelationshipSatisfaction': '人際關係滿意度', 'StandardHours': '標準工時',
-            'StockOptionLevel': '股票期權級別', 'TotalWorkingYears': '年資',
-            'TrainingTimesLastYear': '去年培訓次數', 'WorkLifeBalance': '工作生活平衡',
-            'YearsAtCompany': '公司年資', 'YearsInCurrentRole': '目前職位年資',
-            'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
+            'Age': '年齡', 'Attrition': '離職', 'DailyRate': '日薪', 'Department': '部門',
+            'DistanceFromHome': '通勤距離', 'JobRole': '職位', 'JobSatisfaction': '工作滿意度',
+            'MonthlyIncome': '月收入', 'OverTime': '加班', 'TotalWorkingYears': '年資',
+            'YearsAtCompany': '公司年資'
         }
-
-        # 2. 內容值對照表
         values_map = {
             'Attrition': {'Yes': '是', 'No': '否'},
             'OverTime': {'Yes': '有', 'No': '無'},
             'Gender': {'Female': '女性', 'Male': '男性'},
-            'MaritalStatus': {'Single': '單身', 'Married': '已婚', 'Divorced': '離婚'}
         }
-
-        # 翻譯內容
         for col, trans_dict in values_map.items():
             if col in df.columns:
                 df[col] = df[col].replace(trans_dict)
-
-        # 翻譯欄位
         df.rename(columns=columns_map, inplace=True)
-        
-        # 建立數值化欄位 (給 AI 和 統計圖用)
         if '離職' in df.columns:
             df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '是' else 0)
-            
         return df
-    except Exception as e:
-        return pd.DataFrame() # 回傳空表避免報錯
+    except:
+        return pd.DataFrame()
 
 # ==========================================
-# 1. 系統初始化與上傳
+# 1. 系統初始化
 # ==========================================
-st.title("🏢 IBM HR 戰情室 & 分組競賽系統")
-st.markdown("本系統包含 **「數據分析教學」** 與 **「分組留才競賽」** 兩大模組。")
+st.title("🎰 IBM HR 戰情室 & 綜藝競賽系統")
 
-uploaded_file = st.sidebar.file_uploader("📂 請老師上傳 IBM 資料集 (csv)", type=["csv"])
-
+uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
 if uploaded_file is not None:
     df = load_and_process_data(uploaded_file)
-    if df.empty:
-        st.error("資料讀取錯誤，請確認 CSV 格式。")
-        st.stop()
-    st.sidebar.success(f"✅ 資料載入成功！共 {len(df)} 筆")
 else:
-    st.info("👈 請先從左側選單上傳資料檔案 (WA_Fn-UseC_-HR-Employee-Attrition.csv)。")
+    st.info("請先上傳資料檔案 (WA_Fn-UseC_-HR-Employee-Attrition.csv)")
     st.stop()
 
-# 建立分頁
-tab1, tab2 = st.tabs(["📊 數據分析戰情室 (教學用)", "⚔️ 分組留才大對決 (競賽用)"])
+tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
 
 # ==========================================
-# 分頁 1: 數據分析戰情室 (之前的完整功能)
+# 分頁 1: 數據分析 (維持原樣，精簡顯示)
 # ==========================================
 with tab1:
     st.header("1. 離職原因探索 (EDA)")
-    
-    # 欄位分類
-    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
-    ordinal_cols = ['工作滿意度', '環境滿意度', '人際關係滿意度', '工作投入度', '績效評級', '職級']
-    categorical_cols = ['加班', '商務差旅', '部門', '性別', '婚姻狀況', '教育領域', '職位'] + ordinal_cols
-    
-    # 防呆過濾
-    valid_options = [c for c in (numeric_cols + categorical_cols) if c in df.columns]
-    if '離職_數值' in valid_options: valid_options.remove('離職_數值')
-    
-    col1, col2 = st.columns([2, 1])
-    
+    # 簡單列出幾個關鍵圖表
+    col1, col2 = st.columns(2)
     with col1:
-        st.subheader("變數關聯分析")
-        default_opt = '加班' if '加班' in df.columns else valid_options[0]
-        target_factor = st.selectbox("請選擇分析因子：", valid_options, index=valid_options.index(default_opt) if default_opt in valid_options else 0)
-        
-        # 智慧判斷圖表
-        is_categorical = (target_factor in categorical_cols) or \
-                         (df[target_factor].dtype == 'object') or \
-                         (df[target_factor].nunique() <= 5)
-        
-        if is_categorical:
-            # 長條圖
-            group_data = df.groupby(target_factor)['離職_數值'].agg(['mean', 'count']).reset_index()
-            group_data.columns = [target_factor, '離職率', '人數']
-            group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
-            
-            fig = px.bar(group_data, x=target_factor, y='離職率%', 
-                         title=f"【{target_factor}】各組別離職率",
-                         text='離職率%', color='離職率%', color_continuous_scale='Reds')
-            fig.update_traces(texttemplate='%{text}%', textposition='outside')
+        st.subheader("加班 vs 離職率")
+        if '加班' in df.columns:
+            otp = df.groupby('加班')['離職_數值'].mean().reset_index()
+            fig = px.bar(otp, x='加班', y='離職_數值', title="加班者的離職率顯著較高", color='離職_數值', color_continuous_scale='Reds')
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            # 盒鬚圖
-            fig = px.box(df, x="離職", y=target_factor, color="離職", 
-                         title=f"離職者 vs 在職者的【{target_factor}】差異",
-                         color_discrete_map={'是':'#FF4B4B', '否':'#1F77B4'})
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # 數字顯示
-            avg_yes = df[df['離職']=='是'][target_factor].mean()
-            avg_no = df[df['離職']=='否'][target_factor].mean()
-            diff_pct = ((avg_yes - avg_no) / avg_no) * 100
-            st.metric("離職者平均 vs 在職者", f"{avg_yes:,.1f} / {avg_no:,.1f}", f"差異 {diff_pct:+.1f}%", delta_color="inverse")
-
     with col2:
-        st.subheader("相關性熱圖")
-        corr_cols = ['離職_數值', '月收入', '年齡', '年資', '通勤距離', '工作滿意度']
-        real_corr_cols = [c for c in corr_cols if c in df.columns]
-        
-        if len(real_corr_cols) > 1:
-            corr_matrix = df[real_corr_cols].corr()[['離職_數值']].sort_values(by='離職_數值', ascending=False)
-            fig_corr = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='RdBu_r', aspect="auto")
-            st.plotly_chart(fig_corr, use_container_width=True)
-    
-    st.divider()
-    st.subheader("2. AI 預測模型 & 策略提案")
-    c_ai, c_strat = st.columns(2)
-    
-    with c_ai:
-        if st.button("🚀 訓練 AI 模型"):
-            # 簡單特徵工程
-            drop_cols = ['離職', '員工數量', '員工編號', '年滿18歲', '標準工時', '離職_數值']
-            real_drop = [c for c in drop_cols if c in df.columns]
-            df_ml = pd.get_dummies(df.drop(real_drop, axis=1), drop_first=True)
-            
-            X = df_ml
-            y = df['離職_數值']
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            
-            model = RandomForestClassifier(n_estimators=100, random_state=42)
-            model.fit(X_train, y_train)
-            
-            # 特徵重要性
-            imp = pd.Series(model.feature_importances_, index=X.columns)
-            st.write("**影響離職的前 5 大關鍵因素：**")
-            st.bar_chart(imp.nlargest(5), color='#ff4b4b')
-            
-    with c_strat:
-        st.write("請勾選你們的發現與建議：")
-        findings = st.multiselect("發現問題：", ["加班過多", "薪資偏低", "年齡太輕", "滿意度低"])
-        actions = st.multiselect("建議方案：", ["控制工時", "調整薪資", "留任訪談", "改善環境"])
-        if st.button("提交報告"):
-            st.balloons()
-            st.success("報告已提交！")
+        st.subheader("月收入 vs 離職 (盒鬚圖)")
+        if '月收入' in df.columns:
+            fig2 = px.box(df, x='離職', y='月收入', color='離職', title="離職者薪資普遍較低")
+            st.plotly_chart(fig2, use_container_width=True)
 
 # ==========================================
-# 分頁 2: 分組留才大對決 (修正後的遊戲)
+# 分頁 2: 綜藝大賭桌 (全新設計)
 # ==========================================
 with tab2:
-    st.header("⚔️ HR 戰情室：人才保衛戰")
-    st.info("說明：系統將隨機抽出 5 位員工。請各組運用剛才的分析結果，判斷誰才是真的「高風險離職群」並進行挽留。")
+    st.header("🎡 HR 留才大賭桌 (Group Battle)")
+    st.markdown("### 規則：\n1. 系統發出 5 張員工牌。\n2. 六個小組同時下注，勾選要挽留的人。\n3. 轉動幸運輪盤，被選中的組別 **本局分數加倍**！")
 
     # 初始化遊戲狀態
     if 'scores' not in st.session_state:
-        st.session_state['scores'] = {f"第 {i} 組": 0 for i in range(1, 7)}
+        st.session_state['scores'] = {f"第{i}組": 0 for i in range(1, 7)}
     if 'round_data' not in st.session_state:
         st.session_state['round_data'] = None
+    if 'lucky_team' not in st.session_state:
+        st.session_state['lucky_team'] = None
 
     # 控制區
-    c_ctrl_1, c_ctrl_2 = st.columns([1, 4])
+    c_ctrl_1, c_ctrl_2, c_ctrl_3 = st.columns([1, 1, 3])
     with c_ctrl_1:
-        if st.button("🎲 發牌 (開始新局)", type="primary"):
+        if st.button("🎲 重新發牌 (New Round)", type="primary"):
             st.session_state['round_data'] = df.sample(5).reset_index(drop=True)
-            st.session_state['reveal'] = False
+            st.session_state['lucky_team'] = None
+            # 清空上一局的勾選狀態 (透過 Rerun)
+            st.rerun()
             
-    if st.button("🔄 重置分數"):
-        st.session_state['scores'] = {f"第 {i} 組": 0 for i in range(1, 7)}
+    with c_ctrl_2:
+        if st.button("🧹 重置分數"):
+            st.session_state['scores'] = {f"第{i}組": 0 for i in range(1, 7)}
+            st.session_state['lucky_team'] = None
 
     # 顯示戰場
     if st.session_state['round_data'] is not None:
         round_df = st.session_state['round_data']
         
+        # --- A. 員工牌面 ---
+        st.divider()
         st.subheader("🧐 員工機密檔案")
         cols = st.columns(5)
         for i, row in round_df.iterrows():
             with cols[i]:
                 st.info(f"員工 #{i+1}")
-                st.write(f"**職位**: {row.get('職位', 'N/A')}")
                 st.write(f"**月薪**: ${row.get('月收入', 0):,}")
-                
-                ot_status = row.get('加班', '無')
-                if ot_status == '有':
-                    st.error(f"加班: {ot_status}")
-                else:
-                    st.success(f"加班: {ot_status}")
-                    
+                ot = row.get('加班', '無')
+                if ot == '有': st.error(f"加班: {ot}")
+                else: st.success(f"加班: {ot}")
                 st.write(f"**滿意度**: {row.get('工作滿意度', 0)}")
                 st.write(f"**年資**: {row.get('年資', 0)} 年")
 
+        # --- B. 下注大賭桌 (矩陣顯示) ---
         st.divider()
-        st.subheader("📝 決策區")
+        st.subheader("📝 各組決策看板 (Betting Board)")
+        st.info("請老師詢問各組決定後，在此統一勾選。全班都看得到誰選了誰！")
         
-        # 選擇組別
-        current_team = st.selectbox("現在是哪一組的回合？", list(st.session_state['scores'].keys()))
+        # 建立 6x5 的勾選矩陣
+        # 使用 st.columns 建立表頭
+        h1, h2, h3, h4, h5, h6 = st.columns([1.5, 1, 1, 1, 1, 1])
+        h1.markdown("**組別**")
+        h2.markdown("留 #1")
+        h3.markdown("留 #2")
+        h4.markdown("留 #3")
+        h5.markdown("留 #4")
+        h6.markdown("留 #5")
         
-        # 勾選決策
-        st.write(f"請 **{current_team}** 決定要花預算挽留誰？(勾選 = 挽留)")
-        d_cols = st.columns(5)
-        picks = []
-        for i in range(5):
-            with d_cols[i]:
-                picks.append(st.checkbox(f"留 #{i+1}", key=f"pick_{i}"))
+        team_picks = {}
         
-        if st.button("🚀 確定決策 (揭曉答案)"):
-            score_change = 0
-            details = []
+        # 迴圈建立 6 組的勾選列
+        for team_name in st.session_state['scores'].keys():
+            r1, r2, r3, r4, r5, r6 = st.columns([1.5, 1, 1, 1, 1, 1])
+            r1.markdown(f"### 🚩 {team_name}")
             
-            for i, saved in enumerate(picks):
-                is_leaving = (round_df.iloc[i]['離職'] == '是')
-                
-                if saved: # 救
-                    if is_leaving:
-                        score_change += 10
-                        details.append("✅ 成功挽留 (+10)")
-                    else:
-                        score_change -= 5
-                        details.append("💸 浪費預算 (-5)")
-                else: # 不救
-                    if is_leaving:
-                        score_change -= 10
-                        details.append("💀 人才流失 (-10)")
-                    else:
-                        score_change += 5
-                        details.append("😎 精準放生 (+5)")
+            # 每一組的 5 個勾選框
+            p1 = r2.checkbox("", key=f"{team_name}_1")
+            p2 = r3.checkbox("", key=f"{team_name}_2")
+            p3 = r4.checkbox("", key=f"{team_name}_3")
+            p4 = r5.checkbox("", key=f"{team_name}_4")
+            p5 = r6.checkbox("", key=f"{team_name}_5")
             
-            st.session_state['scores'][current_team] += score_change
-            
-            st.success(f"本局得分：{score_change} 分！")
-            
-            # 顯示結果對照
-            st.write("### 答案揭曉")
-            res_cols = st.columns(5)
-            for i, row in round_df.iterrows():
-                with res_cols[i]:
-                    actual = "想離職" if row['離職'] == '是' else "很忠誠"
-                    color = "red" if row['離職'] == '是' else "green"
-                    st.markdown(f":{color}[**{actual}**]")
-                    st.caption(details[i])
+            team_picks[team_name] = [p1, p2, p3, p4, p5]
 
         st.divider()
-        st.subheader("🏆 目前排行榜")
-        leaderboard = pd.DataFrame(list(st.session_state['scores'].items()), columns=['組別', '分數'])
-        leaderboard = leaderboard.sort_values(by='分數', ascending=False)
-        st.dataframe(leaderboard, use_container_width=True)
+
+        # --- C. 幸運輪盤與結算 ---
+        col_spin, col_submit = st.columns([1, 2])
         
+        with col_spin:
+            st.write("#### 🎡 Lucky Time")
+            if st.button("轉動幸運輪盤！"):
+                # 模擬轉動動畫
+                placeholder = st.empty()
+                teams = list(st.session_state['scores'].keys())
+                for _ in range(15):
+                    rand_team = np.random.choice(teams)
+                    placeholder.markdown(f"### 🎰 {rand_team} ...")
+                    time.sleep(0.1)
+                
+                lucky = np.random.choice(teams)
+                st.session_state['lucky_team'] = lucky
+                placeholder.markdown(f"### 🎉 幸運星：{lucky} (分數 x2)！")
+                
+            if st.session_state['lucky_team']:
+                st.success(f"本局 **{st.session_state['lucky_team']}** 得分將加倍！")
+
+        with col_submit:
+            st.write("#### 🚀 結算時刻")
+            if st.button("揭曉答案 & 計算總分", type="primary", use_container_width=True):
+                st.write("### 📢 本局戰報")
+                
+                # 先顯示正確答案
+                ans_cols = st.columns(5)
+                answers = []
+                for i, row in round_df.iterrows():
+                    is_leaving = (row['離職'] == '是')
+                    answers.append(is_leaving)
+                    with ans_cols[i]:
+                        if is_leaving: st.error(f"#{i+1} 其實想離職")
+                        else: st.success(f"#{i+1} 其實很忠誠")
+
+                # 計算每一組的分數
+                for team, picks in team_picks.items():
+                    round_score = 0
+                    msg = []
+                    
+                    for i, picked in enumerate(picks):
+                        actual_leaving = answers[i]
+                        if picked: # 救
+                            if actual_leaving: round_score += 10 # 救對了
+                            else: round_score -= 5 # 浪費錢
+                        else: # 不救
+                            if actual_leaving: round_score -= 10 # 死掉了
+                            else: round_score += 5 # 判斷正確
+                    
+                    # 幸運輪盤加成
+                    is_lucky = (team == st.session_state['lucky_team'])
+                    if is_lucky:
+                        round_score *= 2
+                        
+                    st.session_state['scores'][team] += round_score
+                    
+                    # 顯示該組結果
+                    luck_icon = "🍀" if is_lucky else ""
+                    st.write(f"**{team}** {luck_icon}: 本局得 **{round_score}** 分 (目前總分: {st.session_state['scores'][team]})")
+
+        # --- D. 總排行榜 ---
+        st.header("🏆 總積分排行榜")
+        lb_df = pd.DataFrame(list(st.session_state['scores'].items()), columns=['組別', '分數'])
+        lb_df = lb_df.sort_values(by='分數', ascending=False)
+        
+        # 視覺化長條圖
+        fig_lb = px.bar(lb_df, y='組別', x='分數', text='分數', orientation='h', 
+                        color='分數', color_continuous_scale='Greens')
+        st.plotly_chart(fig_lb, use_container_width=True)
+
     else:
-        st.info("請點擊上方的「🎲 發牌」按鈕開始遊戲。")
+        st.info("請點擊左上角「🎲 重新發牌」開始第一回合！")
