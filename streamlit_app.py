@@ -1,344 +1,158 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, recall_score
+import random
 
-st.set_page_config(page_title="IBM HR 戰情室 (v10.5)", layout="wide")
+class HRGame:
+    def __init__(self, rounds=5, seed=None):
+        self.rounds = rounds
+        self.current_round = 1
+        self.history = []
+        if seed is not None:
+            random.seed(seed)
+        # 初始狀態（可以依需要調整）
+        self.employees = 50          # 員工人數
+        self.productivity = 1.0      # 每位員工生產力指數
+        self.satisfaction = 0.6      # 員工滿意度 (0~1)
+        self.cash = 1_000_000        # 公司現金（預算）
+        self.revenue = 1_200_000     # 年營收
+        self.salary_per_employee = 30_000
 
-# ==========================================
-# 0. 核心數據處理
-# ==========================================
-@st.cache_data
-def load_and_process_data(file):
-    try:
-        df = pd.read_csv(file)
-        
-        # 1. 欄位名稱翻譯
-        columns_map = {
-            'Age': '年齡', 'Attrition': '離職', 'BusinessTravel': '商務差旅', 'DailyRate': '日薪',
-            'Department': '部門', 'DistanceFromHome': '通勤距離', 'Education': '教育程度',
-            'EducationField': '教育領域', 'EmployeeCount': '員工數量', 'EmployeeNumber': '員工編號',
-            'EnvironmentSatisfaction': '環境滿意度', 'Gender': '性別', 'HourlyRate': '時薪',
-            'JobInvolvement': '工作投入度', 'JobLevel': '職級', 'JobRole': '職位',
-            'JobSatisfaction': '工作滿意度', 'MaritalStatus': '婚姻狀況', 'MonthlyIncome': '月收入',
-            'MonthlyRate': '月費率', 'NumCompaniesWorked': '曾工作公司數量', 'Over18': '年滿18歲',
-            'OverTime': '加班', 'PercentSalaryHike': '加薪百分比', 'PerformanceRating': '績效評級',
-            'RelationshipSatisfaction': '人際關係滿意度', 'StandardHours': '標準工時',
-            'StockOptionLevel': '股票期權級別', 'TotalWorkingYears': '年資',
-            'TrainingTimesLastYear': '去年培訓次數', 'WorkLifeBalance': '工作生活平衡',
-            'YearsAtCompany': '公司年資', 'YearsInCurrentRole': '目前職位年資',
-            'YearsSinceLastPromotion': '距離上次晉升年資', 'YearsWithCurrManager': '與目前經理共事年資'
+    def print_state(self):
+        print(f"\n========== 第 {self.current_round} 回合 / 共 {self.rounds} 回合 ==========")
+        print(f"員工人數：{self.employees}")
+        print(f"平均生產力指數：{self.productivity:.2f}")
+        print(f"員工滿意度：{self.satisfaction:.2f} (0~1)")
+        print(f"現金（可用預算）：{self.cash:,.0f}")
+        print(f"上一回合營收：{self.revenue:,.0f}")
+
+    def get_decisions(self):
+        print("\n請輸入本回合 HR 策略決策（直接輸入數字）：")
+        hire = int(input("1) 本年度新招募人數（可為 0）："))
+        training_budget = int(input("2) 訓練與發展預算（建議 0~300000）："))
+        raise_percent = float(input("3) 平均調薪百分比（例如輸入 3 代表 3%）："))
+        layoff = int(input("4) 裁員人數（沒有就輸入 0）："))
+        return {
+            "hire": hire,
+            "training_budget": training_budget,
+            "raise_percent": raise_percent,
+            "layoff": layoff,
         }
 
-        # 2. 內容翻譯
-        values_map = {
-            'Attrition': {'Yes': '已離職', 'No': '留任'},
-            'OverTime': {'Yes': '有', 'No': '無'},
-            'Gender': {'Female': '女性', 'Male': '男性'},
-            'MaritalStatus': {'Single': '單身', 'Married': '已婚', 'Divorced': '離婚'}
+    def apply_decisions(self, d):
+        # 基本成本與人數變動
+        # 招募成本：每人 20,000
+        hiring_cost = max(d["hire"], 0) * 20_000
+        # 裁員補償金：每人 15,000
+        layoff_cost = max(d["layoff"], 0) * 15_000
+
+        # 調薪成本：以現有人數 * 平均薪資 * 百分比 粗略估算
+        raise_cost = self.employees * self.salary_per_employee * (d["raise_percent"] / 100)
+
+        total_hr_cost = hiring_cost + layoff_cost + d["training_budget"] + raise_cost
+
+        # 員工人數更新
+        self.employees = max(self.employees + d["hire"] - d["layoff"], 0)
+
+        # 滿意度與生產力變化（非常簡化的規則）
+        # 訓練預算：提高生產力與滿意度，但有遞減效果
+        train_effect = min(d["training_budget"] / 300_000, 1.0)  # 0~1
+
+        # 調薪：提高滿意度，但過高會壓力大（成本高），稍微影響現金
+        if d["raise_percent"] > 0:
+            raise_effect = min(d["raise_percent"] / 10, 0.5)  # 最多 +0.5
+        else:
+            raise_effect = -0.1  # 完全不加薪，員工有點不爽
+
+        # 裁員：滿意度下降，短期成本上升
+        if d["layoff"] > 0:
+            layoff_effect = - min(d["layoff"] / 50, 0.4)  # 最多 -0.4
+        else:
+            layoff_effect = 0
+
+        # 綜合對滿意度的影響
+        delta_satisfaction = 0.3 * train_effect + raise_effect + layoff_effect
+
+        # 隨機外部環境影響（市場、景氣等）
+        external_shock = random.uniform(-0.05, 0.05)
+
+        # 更新滿意度（保持在 0~1）
+        self.satisfaction = min(max(self.satisfaction + delta_satisfaction + external_shock, 0), 1)
+
+        # 生產力受訓練與滿意度影響
+        delta_productivity = 0.2 * train_effect + 0.3 * (self.satisfaction - 0.6)
+        self.productivity = max(self.productivity + delta_productivity, 0.5)  # 不低於 0.5
+
+        # 離職率：滿意度低時較高
+        turnover_rate = max(0.05, 0.25 - 0.2 * self.satisfaction)  # 大約 5%~25%
+        turnover = int(self.employees * turnover_rate)
+        self.employees = max(self.employees - turnover, 0)
+
+        # 計算人力成本與營收
+        salary_cost = self.employees * self.salary_per_employee * (1 + d["raise_percent"] / 100)
+        # 營收 = 員工數 * 生產力 * 一個係數（簡化）
+        revenue_factor = random.uniform(18_000, 22_000)
+        self.revenue = int(self.employees * self.productivity * revenue_factor)
+
+        # 更新現金
+        profit = self.revenue - salary_cost - total_hr_cost
+        self.cash += profit
+
+        # 記錄本回合結果
+        record = {
+            "round": self.current_round,
+            "hire": d["hire"],
+            "training_budget": d["training_budget"],
+            "raise_percent": d["raise_percent"],
+            "layoff": d["layoff"],
+            "turnover": turnover,
+            "employees": self.employees,
+            "satisfaction": round(self.satisfaction, 3),
+            "productivity": round(self.productivity, 3),
+            "revenue": self.revenue,
+            "salary_cost": int(salary_cost),
+            "total_hr_cost": int(total_hr_cost),
+            "profit": int(profit),
+            "cash": int(self.cash),
         }
+        self.history.append(record)
 
-        for col, trans_dict in values_map.items():
-            if col in df.columns:
-                df[col] = df[col].replace(trans_dict)
+        print("\n--- 本回合結果摘要 ---")
+        print(f"自然離職人數：{turnover}")
+        print(f"本回合營收：{self.revenue:,.0f}")
+        print(f"人事成本（含加薪後）：{salary_cost:,.0f}")
+        print(f"HR 額外成本（招募+訓練+裁員+加薪）：{total_hr_cost:,.0f}")
+        print(f"本回合盈餘（可能為負）：{profit:,.0f}")
+        print(f"期末現金餘額：{self.cash:,.0f}")
 
-        df.rename(columns=columns_map, inplace=True)
-        
-        # 3. 數值化處理 (給熱圖與AI用)
-        if '離職' in df.columns:
-            df['離職_數值'] = df['離職'].apply(lambda x: 1 if x == '已離職' else 0)
-            
-        # ★★★ 新增：把加班也轉成數值，讓它能進熱圖 ★★★
-        if '加班' in df.columns:
-            df['加班_數值'] = df['加班'].apply(lambda x: 1 if x == '有' else 0)
+    def final_score(self):
+        # 綜合指標：最後現金 + 最後滿意度 * 權重 + 最後人數 * 權重
+        if not self.history:
+            return 0
+        last = self.history[-1]
+        score = last["cash"] / 1000 + last["satisfaction"] * 500 + last["employees"] * 5
+        return int(score)
 
-        # 4. 自動薪資轉換 (USD -> TWD, x30)
-        salary_cols = ['月收入', '日薪', '時薪', '月費率']
-        for col in salary_cols:
-            if col in df.columns:
-                df[col] = df[col] * 30
+    def print_summary(self):
+        print("\n========== 遊戲結束：總結 ==========")
+        for r in self.history:
+            print(
+                f"第{r['round']}回合 | 員工:{r['employees']} | 滿意度:{r['satisfaction']} | "
+                f"生產力:{r['productivity']} | 營收:{r['revenue']:,.0f} | 盈餘:{r['profit']:,.0f} | 現金:{r['cash']:,.0f}"
+            )
+        print("\n*** 最終綜合分數（可用來與其他小組比較）：", self.final_score(), "***")
 
-        # 5. 滿意度 1-4 轉中文
-        satisfaction_cols = ['環境滿意度', '工作滿意度', '人際關係滿意度', '工作投入度', '工作生活平衡']
-        mapping_1to4 = {1: '1 (低)', 2: '2 (中)', 3: '3 (高)', 4: '4 (極高)'}
-        for col in satisfaction_cols:
-            if col in df.columns:
-                df[f'{col}_標籤'] = df[col].map(mapping_1to4).fillna(df[col])
-                
-        return df
-    except Exception as e:
-        return pd.DataFrame()
 
-# ==========================================
-# 1. 系統初始化
-# ==========================================
-st.title("🎰 IBM HR 戰情室 (v10.5 全面掃描版)")
-st.markdown("本系統熱圖已擴充至 **18 個關鍵指標**，包含加班、股票、升遷年資等，提供地毯式分析。")
+def main():
+    print("歡迎來到『策略性人力資源模擬遊戲』！")
+    rounds = int(input("請輸入總回合數（建議 3~5）："))
+    game = HRGame(rounds=rounds)
 
-uploaded_file = st.sidebar.file_uploader("📂 老師請上傳 CSV", type=["csv"])
-if uploaded_file is not None:
-    df = load_and_process_data(uploaded_file)
-    st.sidebar.success("✅ 資料載入成功")
-else:
-    st.info("請先上傳資料檔案 (WA_Fn-UseC_-HR-Employee-Attrition.csv)")
-    st.stop()
+    while game.current_round <= game.rounds:
+        game.print_state()
+        decisions = game.get_decisions()
+        game.apply_decisions(decisions)
+        game.current_round += 1
 
-tab1, tab2 = st.tabs(["📊 數據分析教學", "🎡 分組留才大賭桌"])
+    game.print_summary()
 
-# ==========================================
-# 分頁 1: 數據分析 (EDA)
-# ==========================================
-with tab1:
-    st.header("1. 離職原因探索 (EDA)")
-    
-    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
-    ordinal_cols = ['工作滿意度', '環境滿意度', '人際關係滿意度', '工作投入度', '績效評級', '職級', '工作生活平衡']
-    categorical_cols = ['加班', '商務差旅', '部門', '性別', '婚姻狀況', '教育領域', '職位'] + ordinal_cols
-    
-    valid_options = [c for c in (numeric_cols + categorical_cols) if c in df.columns]
-    # 過濾掉輔助欄位
-    valid_options = [c for c in valid_options if '_標籤' not in c and '_數值' not in c]
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader("變數關聯分析 (可多選)")
-        
-        default_opts = [c for c in ['加班', '月收入'] if c in df.columns]
-        selected_factors = st.multiselect("請勾選分析因子：", valid_options, default=default_opts)
-        
-        for target_factor in selected_factors:
-            st.markdown(f"#### 📌 分析項目：{target_factor}")
-            
-            plot_factor = target_factor
-            if f"{target_factor}_標籤" in df.columns:
-                plot_factor = f"{target_factor}_標籤"
-            
-            is_money = target_factor in ['月收入', '日薪', '時薪']
-            money_prefix = "NT$ " if is_money else ""
-            
-            is_categorical = (target_factor in categorical_cols) or \
-                             (df[target_factor].dtype == 'object') or \
-                             (df[target_factor].nunique() <= 5)
-            
-            if is_categorical:
-                # === 長條圖 ===
-                group_data = df.groupby(plot_factor)['離職_數值'].agg(['mean', 'sum', 'count']).reset_index()
-                group_data.columns = [plot_factor, '離職率', '離職人數', '總人數']
-                group_data['離職率%'] = (group_data['離職率'] * 100).round(1)
-                
-                group_data['顯示標籤'] = group_data.apply(
-                    lambda x: f"{x['離職率%']}%<br>({int(x['離職人數'])}/{int(x['總人數'])}人)", axis=1
-                )
-                
-                max_val = group_data['離職率%'].max()
-                fig = px.bar(group_data, x=plot_factor, y='離職率%', 
-                             text='顯示標籤',
-                             title=f"【{target_factor}】離職率分析",
-                             color='離職率%', color_continuous_scale='Reds')
-                
-                fig.update_traces(textposition='outside', textfont_size=14)
-                fig.update_layout(yaxis=dict(range=[0, max_val * 1.35])) 
-                st.plotly_chart(fig, use_container_width=True)
-                
-                with st.expander(f"📋 查看數據表", expanded=True):
-                    st.dataframe(group_data[[plot_factor, '總人數', '離職人數', '離職率%']], hide_index=True, use_container_width=True)
-                
-                try:
-                    max_row = group_data.loc[group_data['離職率%'].idxmax()]
-                    min_row = group_data.loc[group_data['離職率%'].idxmin()]
-                    gap = max_row['離職率%'] - min_row['離職率%']
-                    if gap > 10:
-                        st.error(f"🔍 **結論：有顯著相關！** (差距 {gap:.1f}%)")
-                    elif gap > 5:
-                        st.warning(f"🔍 **結論：有輕微相關。**")
-                    else:
-                        st.info(f"🔍 **結論：無顯著相關。**")
-                except: pass
 
-            else:
-                # === 盒鬚圖 ===
-                fig = px.box(df, x="離職", y=target_factor, color="離職", 
-                             title=f"【{target_factor}】分佈比較",
-                             color_discrete_map={'已離職':'#FF4B4B', '留任':'#1F77B4'})
-                st.plotly_chart(fig, use_container_width=True)
-                
-                stat_df = df.groupby('離職')[target_factor].agg(['mean', 'median', 'count']).reset_index()
-                stat_df.columns = ['狀態', '平均值', '中位數', '人數']
-                
-                with st.expander(f"📋 查看數據表", expanded=True):
-                    show_df = stat_df.copy()
-                    if is_money:
-                        show_df['平均值'] = show_df['平均值'].apply(lambda x: f"NT$ {x:,.0f}")
-                        show_df['中位數'] = show_df['中位數'].apply(lambda x: f"NT$ {x:,.0f}")
-                    else:
-                        show_df['平均值'] = show_df['平均值'].apply(lambda x: f"{x:.1f}")
-                    st.dataframe(show_df, hide_index=True, use_container_width=True)
-
-                try:
-                    val_yes = stat_df[stat_df['狀態']=='已離職']['平均值'].values[0]
-                    val_no = stat_df[stat_df['狀態']=='留任']['平均值'].values[0]
-                    diff_pct = ((val_yes - val_no) / val_no) * 100 if val_no != 0 else 0
-                    
-                    if diff_pct < -10:
-                        st.error(f"🔍 **結論：有顯著負相關！** (離職者低了 {abs(diff_pct):.1f}%)")
-                    elif diff_pct > 10:
-                        st.error(f"🔍 **結論：有顯著正相關！** (離職者高了 {diff_pct:.1f}%)")
-                    else:
-                        st.info(f"🔍 **結論：無顯著差異 ({diff_pct:.1f}%)。**")
-                except: pass
-            
-            st.divider()
-
-    with col2:
-        st.subheader("相關性熱圖 (紅=危險 / 綠=安全)")
-        
-        # ★★★ 大幅擴充熱圖變數 ★★★
-        extended_corr_cols = [
-            '離職_數值', '加班_數值', '月收入', '年齡', '年資', '公司年資', 
-            '職級', '股票期權級別', '工作投入度', '工作滿意度', 
-            '環境滿意度', '工作生活平衡', '通勤距離', '曾工作公司數量',
-            '去年培訓次數', '距離上次晉升年資', '與目前經理共事年資'
-        ]
-        
-        # 過濾出真正存在的欄位
-        real_corr_cols = [c for c in extended_corr_cols if c in df.columns]
-        
-        if len(real_corr_cols) > 1:
-            corr_matrix = df[real_corr_cols].corr()[['離職_數值']].sort_values(by='離職_數值', ascending=False)
-            
-            # 使用 RdYlGn_r (紅=正相關/危險, 綠=負相關/安全)
-            fig_corr = px.imshow(corr_matrix, 
-                                 text_auto=True, 
-                                 color_continuous_scale='RdYlGn_r', 
-                                 aspect="auto",
-                                 height=800, # ★★★ 拉長畫布，讓18個項目不擁擠
-                                 title="全方位風險因子掃描")
-            st.plotly_chart(fig_corr, use_container_width=True)
-            
-            st.caption("🔴 紅色：數值越高，離職率越高 (危險推手)")
-            st.caption("🟢 綠色：數值越高，離職率越低 (留任拉力)")
-
-# ==========================================
-# 分頁 2: 綜藝大賭桌 (維持不變)
-# ==========================================
-with tab2:
-    st.header("🎡 HR 留才大賭桌")
-    st.markdown("### 規則：\n1. 系統發出 5 張員工牌。\n2. 六個小組同時下注，勾選要挽留的人。\n3. 轉動幸運輪盤，被選中的組別 **本局分數加倍**！")
-
-    if 'scores' not in st.session_state:
-        st.session_state['scores'] = {f"第{i}組": 0 for i in range(1, 7)}
-    if 'round_data' not in st.session_state:
-        st.session_state['round_data'] = None
-    if 'lucky_team' not in st.session_state:
-        st.session_state['lucky_team'] = None
-
-    c_ctrl_1, c_ctrl_2, c_ctrl_3 = st.columns([1, 1, 3])
-    with c_ctrl_1:
-        if st.button("🎲 重新發牌 (New Round)", type="primary"):
-            st.session_state['round_data'] = df.sample(5).reset_index(drop=True)
-            st.session_state['lucky_team'] = None
-            st.rerun()
-    with c_ctrl_2:
-        if st.button("🧹 重置分數"):
-            st.session_state['scores'] = {f"第{i}組": 0 for i in range(1, 7)}
-            st.session_state['lucky_team'] = None
-
-    if st.session_state['round_data'] is not None:
-        round_df = st.session_state['round_data']
-        
-        st.divider()
-        st.subheader("🧐 員工機密檔案")
-        cols = st.columns(5)
-        for i, row in round_df.iterrows():
-            with cols[i]:
-                st.info(f"員工 #{i+1}")
-                st.write(f"**月薪**: 💰 NT$ {row.get('月收入', 0):,.0f}")
-                ot = row.get('加班', '無')
-                if ot == '有': st.error(f"加班: {ot}")
-                else: st.success(f"加班: {ot}")
-                st.write(f"**滿意度**: {row.get('工作滿意度', 0)}")
-                st.write(f"**年資**: {row.get('年資', 0)} 年")
-
-        st.divider()
-        st.subheader("📝 各組決策看板")
-        
-        h1, h2, h3, h4, h5, h6 = st.columns([1.5, 1, 1, 1, 1, 1])
-        h1.markdown("**組別**")
-        h2.markdown("#1")
-        h3.markdown("#2")
-        h4.markdown("#3")
-        h5.markdown("#4")
-        h6.markdown("#5")
-        
-        team_picks = {}
-        for team_name in st.session_state['scores'].keys():
-            r1, r2, r3, r4, r5, r6 = st.columns([1.5, 1, 1, 1, 1, 1])
-            r1.markdown(f"### 🚩 {team_name}")
-            p1 = r2.checkbox("", key=f"{team_name}_1")
-            p2 = r3.checkbox("", key=f"{team_name}_2")
-            p3 = r4.checkbox("", key=f"{team_name}_3")
-            p4 = r5.checkbox("", key=f"{team_name}_4")
-            p5 = r6.checkbox("", key=f"{team_name}_5")
-            team_picks[team_name] = [p1, p2, p3, p4, p5]
-
-        st.divider()
-
-        col_spin, col_submit = st.columns([1, 2])
-        with col_spin:
-            st.write("#### 🎡 Lucky Time")
-            if st.button("轉動幸運輪盤！"):
-                placeholder = st.empty()
-                teams = list(st.session_state['scores'].keys())
-                for _ in range(15):
-                    rand_team = np.random.choice(teams)
-                    placeholder.markdown(f"### 🎰 {rand_team} ...")
-                    time.sleep(0.1)
-                lucky = np.random.choice(teams)
-                st.session_state['lucky_team'] = lucky
-                placeholder.markdown(f"### 🎉 幸運星：{lucky} (分數 x2)！")
-            if st.session_state['lucky_team']:
-                st.success(f"本局 **{st.session_state['lucky_team']}** 得分將加倍！")
-
-        with col_submit:
-            st.write("#### 🚀 結算時刻")
-            if st.button("揭曉答案 & 計算總分", type="primary", use_container_width=True):
-                st.write("### 📢 本局戰報")
-                ans_cols = st.columns(5)
-                answers = []
-                for i, row in round_df.iterrows():
-                    is_leaving = (row['離職'] == '已離職')
-                    answers.append(is_leaving)
-                    with ans_cols[i]:
-                        if is_leaving: st.error(f"#{i+1} 想離職")
-                        else: st.success(f"#{i+1} 很忠誠")
-
-                for team, picks in team_picks.items():
-                    round_score = 0
-                    for i, picked in enumerate(picks):
-                        actual_leaving = answers[i]
-                        if picked: 
-                            if actual_leaving: round_score += 10
-                            else: round_score -= 5
-                        else:
-                            if actual_leaving: round_score -= 10
-                            else: round_score += 5
-                    
-                    if team == st.session_state['lucky_team']:
-                        round_score *= 2
-                        
-                    st.session_state['scores'][team] += round_score
-                    luck_icon = "🍀" if team == st.session_state['lucky_team'] else ""
-                    st.write(f"**{team}** {luck_icon}: 本局得 **{round_score}** 分")
-
-        st.header("🏆 總積分排行榜")
-        lb_df = pd.DataFrame(list(st.session_state['scores'].items()), columns=['組別', '分數'])
-        lb_df = lb_df.sort_values(by='分數', ascending=False)
-        fig_lb = px.bar(lb_df, y='組別', x='分數', text='分數', orientation='h', color='分數', color_continuous_scale='Greens')
-        st.plotly_chart(fig_lb, use_container_width=True)
-
-    else:
-        st.info("請點擊左上角「🎲 重新發牌」開始第一回合！")
+if __name__ == "__main__":
+    main()
