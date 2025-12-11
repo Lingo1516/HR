@@ -1,158 +1,158 @@
 import random
+import streamlit as st
 
-class HRGame:
-    def __init__(self, rounds=5, seed=None):
-        self.rounds = rounds
-        self.current_round = 1
-        self.history = []
-        if seed is not None:
-            random.seed(seed)
-        # 初始狀態（可以依需要調整）
-        self.employees = 50          # 員工人數
-        self.productivity = 1.0      # 每位員工生產力指數
-        self.satisfaction = 0.6      # 員工滿意度 (0~1)
-        self.cash = 1_000_000        # 公司現金（預算）
-        self.revenue = 1_200_000     # 年營收
-        self.salary_per_employee = 30_000
+# --------- 遊戲狀態初始化（使用 session_state） ---------
+def init_game():
+    st.session_state.rounds = st.session_state.get("rounds", 5)
+    st.session_state.current_round = 1
+    st.session_state.employees = 50
+    st.session_state.productivity = 1.0
+    st.session_state.satisfaction = 0.6
+    st.session_state.cash = 1_000_000
+    st.session_state.revenue = 1_200_000
+    st.session_state.salary_per_employee = 30_000
+    st.session_state.history = []
 
-    def print_state(self):
-        print(f"\n========== 第 {self.current_round} 回合 / 共 {self.rounds} 回合 ==========")
-        print(f"員工人數：{self.employees}")
-        print(f"平均生產力指數：{self.productivity:.2f}")
-        print(f"員工滿意度：{self.satisfaction:.2f} (0~1)")
-        print(f"現金（可用預算）：{self.cash:,.0f}")
-        print(f"上一回合營收：{self.revenue:,.0f}")
+# --------- 每回合計算邏輯（沿用前一版規則） ---------
+def apply_decisions(hire, training_budget, raise_percent, layoff):
+    employees = st.session_state.employees
+    satisfaction = st.session_state.satisfaction
+    productivity = st.session_state.productivity
+    cash = st.session_state.cash
+    salary_per_employee = st.session_state.salary_per_employee
 
-    def get_decisions(self):
-        print("\n請輸入本回合 HR 策略決策（直接輸入數字）：")
-        hire = int(input("1) 本年度新招募人數（可為 0）："))
-        training_budget = int(input("2) 訓練與發展預算（建議 0~300000）："))
-        raise_percent = float(input("3) 平均調薪百分比（例如輸入 3 代表 3%）："))
-        layoff = int(input("4) 裁員人數（沒有就輸入 0）："))
-        return {
-            "hire": hire,
-            "training_budget": training_budget,
-            "raise_percent": raise_percent,
-            "layoff": layoff,
-        }
+    # 成本
+    hiring_cost = max(hire, 0) * 20_000
+    layoff_cost = max(layoff, 0) * 15_000
+    raise_cost = employees * salary_per_employee * (raise_percent / 100)
+    total_hr_cost = hiring_cost + layoff_cost + training_budget + raise_cost
 
-    def apply_decisions(self, d):
-        # 基本成本與人數變動
-        # 招募成本：每人 20,000
-        hiring_cost = max(d["hire"], 0) * 20_000
-        # 裁員補償金：每人 15,000
-        layoff_cost = max(d["layoff"], 0) * 15_000
+    # 員工數更新
+    employees = max(employees + hire - layoff, 0)
 
-        # 調薪成本：以現有人數 * 平均薪資 * 百分比 粗略估算
-        raise_cost = self.employees * self.salary_per_employee * (d["raise_percent"] / 100)
+    # 訓練效果
+    train_effect = min(training_budget / 300_000, 1.0)
 
-        total_hr_cost = hiring_cost + layoff_cost + d["training_budget"] + raise_cost
+    # 加薪效果
+    if raise_percent > 0:
+        raise_effect = min(raise_percent / 10, 0.5)
+    else:
+        raise_effect = -0.1
 
-        # 員工人數更新
-        self.employees = max(self.employees + d["hire"] - d["layoff"], 0)
+    # 裁員效果
+    if layoff > 0:
+        layoff_effect = - min(layoff / 50, 0.4)
+    else:
+        layoff_effect = 0
 
-        # 滿意度與生產力變化（非常簡化的規則）
-        # 訓練預算：提高生產力與滿意度，但有遞減效果
-        train_effect = min(d["training_budget"] / 300_000, 1.0)  # 0~1
+    delta_satisfaction = 0.3 * train_effect + raise_effect + layoff_effect
+    external_shock = random.uniform(-0.05, 0.05)
+    satisfaction = min(max(satisfaction + delta_satisfaction + external_shock, 0), 1)
 
-        # 調薪：提高滿意度，但過高會壓力大（成本高），稍微影響現金
-        if d["raise_percent"] > 0:
-            raise_effect = min(d["raise_percent"] / 10, 0.5)  # 最多 +0.5
-        else:
-            raise_effect = -0.1  # 完全不加薪，員工有點不爽
+    delta_productivity = 0.2 * train_effect + 0.3 * (satisfaction - 0.6)
+    productivity = max(productivity + delta_productivity, 0.5)
 
-        # 裁員：滿意度下降，短期成本上升
-        if d["layoff"] > 0:
-            layoff_effect = - min(d["layoff"] / 50, 0.4)  # 最多 -0.4
-        else:
-            layoff_effect = 0
+    turnover_rate = max(0.05, 0.25 - 0.2 * satisfaction)
+    turnover = int(employees * turnover_rate)
+    employees = max(employees - turnover, 0)
 
-        # 綜合對滿意度的影響
-        delta_satisfaction = 0.3 * train_effect + raise_effect + layoff_effect
+    salary_cost = employees * salary_per_employee * (1 + raise_percent / 100)
+    revenue_factor = random.uniform(18_000, 22_000)
+    revenue = int(employees * productivity * revenue_factor)
 
-        # 隨機外部環境影響（市場、景氣等）
-        external_shock = random.uniform(-0.05, 0.05)
+    profit = revenue - salary_cost - total_hr_cost
+    cash += profit
 
-        # 更新滿意度（保持在 0~1）
-        self.satisfaction = min(max(self.satisfaction + delta_satisfaction + external_shock, 0), 1)
+    # 更新回 session_state
+    st.session_state.employees = employees
+    st.session_state.satisfaction = satisfaction
+    st.session_state.productivity = productivity
+    st.session_state.cash = cash
+    st.session_state.revenue = revenue
 
-        # 生產力受訓練與滿意度影響
-        delta_productivity = 0.2 * train_effect + 0.3 * (self.satisfaction - 0.6)
-        self.productivity = max(self.productivity + delta_productivity, 0.5)  # 不低於 0.5
+    record = {
+        "round": st.session_state.current_round,
+        "hire": hire,
+        "training_budget": training_budget,
+        "raise_percent": raise_percent,
+        "layoff": layoff,
+        "turnover": turnover,
+        "employees": employees,
+        "satisfaction": round(satisfaction, 3),
+        "productivity": round(productivity, 3),
+        "revenue": revenue,
+        "salary_cost": int(salary_cost),
+        "total_hr_cost": int(total_hr_cost),
+        "profit": int(profit),
+        "cash": int(cash),
+    }
+    st.session_state.history.append(record)
 
-        # 離職率：滿意度低時較高
-        turnover_rate = max(0.05, 0.25 - 0.2 * self.satisfaction)  # 大約 5%~25%
-        turnover = int(self.employees * turnover_rate)
-        self.employees = max(self.employees - turnover, 0)
+# --------- 最終分數 ---------
+def final_score():
+    if not st.session_state.history:
+        return 0
+    last = st.session_state.history[-1]
+    score = last["cash"] / 1000 + last["satisfaction"] * 500 + last["employees"] * 5
+    return int(score)
 
-        # 計算人力成本與營收
-        salary_cost = self.employees * self.salary_per_employee * (1 + d["raise_percent"] / 100)
-        # 營收 = 員工數 * 生產力 * 一個係數（簡化）
-        revenue_factor = random.uniform(18_000, 22_000)
-        self.revenue = int(self.employees * self.productivity * revenue_factor)
+# ================= Streamlit 介面 =================
+st.title("策略性人力資源模擬遊戲（Streamlit版）")
 
-        # 更新現金
-        profit = self.revenue - salary_cost - total_hr_cost
-        self.cash += profit
+# 第一次進來先初始化
+if "initialized" not in st.session_state:
+    init_game()
+    st.session_state.initialized = True
 
-        # 記錄本回合結果
-        record = {
-            "round": self.current_round,
-            "hire": d["hire"],
-            "training_budget": d["training_budget"],
-            "raise_percent": d["raise_percent"],
-            "layoff": d["layoff"],
-            "turnover": turnover,
-            "employees": self.employees,
-            "satisfaction": round(self.satisfaction, 3),
-            "productivity": round(self.productivity, 3),
-            "revenue": self.revenue,
-            "salary_cost": int(salary_cost),
-            "total_hr_cost": int(total_hr_cost),
-            "profit": int(profit),
-            "cash": int(self.cash),
-        }
-        self.history.append(record)
+# 側邊欄：設定回合數與重置遊戲
+with st.sidebar:
+    st.header("遊戲設定")
+    rounds_input = st.number_input("總回合數", min_value=1, max_value=10, value=st.session_state.rounds, step=1)
+    if st.button("重新開始遊戲"):
+        init_game()
+        st.session_state.rounds = int(rounds_input)
+        st.experimental_rerun()
 
-        print("\n--- 本回合結果摘要 ---")
-        print(f"自然離職人數：{turnover}")
-        print(f"本回合營收：{self.revenue:,.0f}")
-        print(f"人事成本（含加薪後）：{salary_cost:,.0f}")
-        print(f"HR 額外成本（招募+訓練+裁員+加薪）：{total_hr_cost:,.0f}")
-        print(f"本回合盈餘（可能為負）：{profit:,.0f}")
-        print(f"期末現金餘額：{self.cash:,.0f}")
+st.write(f"目前為第 **{st.session_state.current_round} / {st.session_state.rounds}** 回合")
 
-    def final_score(self):
-        # 綜合指標：最後現金 + 最後滿意度 * 權重 + 最後人數 * 權重
-        if not self.history:
-            return 0
-        last = self.history[-1]
-        score = last["cash"] / 1000 + last["satisfaction"] * 500 + last["employees"] * 5
-        return int(score)
+# 顯示目前公司狀態
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("員工人數", st.session_state.employees)
+    st.metric("員工滿意度 (0~1)", f"{st.session_state.satisfaction:.2f}")
+with col2:
+    st.metric("平均生產力指數", f"{st.session_state.productivity:.2f}")
+    st.metric("現金（預算）", f"{st.session_state.cash:,.0f}")
+with col3:
+    st.metric("上一回合營收", f"{st.session_state.revenue:,.0f}")
 
-    def print_summary(self):
-        print("\n========== 遊戲結束：總結 ==========")
-        for r in self.history:
-            print(
-                f"第{r['round']}回合 | 員工:{r['employees']} | 滿意度:{r['satisfaction']} | "
-                f"生產力:{r['productivity']} | 營收:{r['revenue']:,.0f} | 盈餘:{r['profit']:,.0f} | 現金:{r['cash']:,.0f}"
-            )
-        print("\n*** 最終綜合分數（可用來與其他小組比較）：", self.final_score(), "***")
+st.markdown("---")
+st.subheader("本回合 HR 策略決策")
 
+# 使用輸入元件收集決策
+c1, c2 = st.columns(2)
+with c1:
+    hire = st.number_input("1) 新招募人數", min_value=0, max_value=500, value=0, step=1)
+    training_budget = st.number_input("2) 訓練與發展預算", min_value=0, max_value=1_000_000, value=0, step=10_000)
+with c2:
+    raise_percent = st.number_input("3) 平均調薪百分比", min_value=-10.0, max_value=30.0, value=0.0, step=0.5)
+    layoff = st.number_input("4) 裁員人數", min_value=0, max_value=500, value=0, step=1)
 
-def main():
-    print("歡迎來到『策略性人力資源模擬遊戲』！")
-    rounds = int(input("請輸入總回合數（建議 3~5）："))
-    game = HRGame(rounds=rounds)
+# 按下按鈕才進入下一回合
+if st.button("提交本回合決策並計算結果"):
+    if st.session_state.current_round > st.session_state.rounds:
+        st.warning("遊戲已結束，請在側邊欄按『重新開始遊戲』。")
+    else:
+        apply_decisions(int(hire), int(training_budget), float(raise_percent), int(layoff))
+        st.session_state.current_round += 1
 
-    while game.current_round <= game.rounds:
-        game.print_state()
-        decisions = game.get_decisions()
-        game.apply_decisions(decisions)
-        game.current_round += 1
+# 顯示歷史結果
+if st.session_state.history:
+    st.markdown("### 歷史回合摘要")
+    st.dataframe(st.session_state.history)
 
-    game.print_summary()
-
-
-if __name__ == "__main__":
-    main()
+# 若遊戲結束，顯示總結與分數
+if st.session_state.current_round > st.session_state.rounds:
+    st.markdown("---")
+    st.subheader("遊戲結束")
+    st.write(f"最終綜合分數：**{final_score()}**（可用來比較各小組表現）")
